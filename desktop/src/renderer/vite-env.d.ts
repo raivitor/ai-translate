@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 interface Window {
-  aiTranslate: {
+  aiTranslate?: {
     platform: NodeJS.Platform
   }
 }

@@ -190,7 +190,7 @@ export async function startTranslationSession({
       throw new Error('WebRTC did not create an SDP offer.')
     }
 
-    const sdpResponse = await fetch('https://api.openai.com/v1/realtime/calls', {
+    const sdpResponse = await fetch('https://api.openai.com/v1/realtime/translations/calls', {
       method: 'POST',
       body: offer.sdp,
       headers: {

@@ -49,6 +49,7 @@ function getStatusLabel(status: TranslationStatus): string {
 
 export function App() {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined)
+  const platform = window.aiTranslate?.platform ?? 'browser'
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [inputDeviceId, setInputDeviceId] = useState('')
   const [outputDeviceId, setOutputDeviceId] = useState('')
@@ -272,7 +273,7 @@ export function App() {
         </div>
         <div>
           <span>Plataforma</span>
-          <strong>{window.aiTranslate.platform}</strong>
+          <strong>{platform}</strong>
         </div>
         <div>
           <span>Meet</span>
