@@ -1,8 +1,8 @@
 {
-  "name": "boilerplate-api",
+  "name": "ai-translate-api",
   "version": "1.0.0",
   "private": true,
-  "description": "Minimal Express + Drizzle boilerplate API with a sample CRUD and healthcheck.",
+  "description": "Ai Translate API built with Express + TypeScript + Drizzle + Postgres.",
   "type": "module",
   "main": "dist/server.js",
   "engines": {

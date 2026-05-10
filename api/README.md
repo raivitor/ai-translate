@@ -1,39 +1,20 @@
-# API Boilerplate
+# Ai Translate API
 
-Boilerplate mínimo em `Express + TypeScript + Drizzle + Postgres`, com:
+API em `Express + TypeScript + Drizzle + Postgres`, com:
 
 - healthcheck em `/healthcheck` e `/api/healthcheck`
-- CRUD completo de exemplo em `/api/items`
-- validação com `zod`
-- testes unitários e de integração com `node:test` e `supertest`
-
-## Estrutura
-
-- `src/app.ts`: configuração do Express e healthcheck
-- `src/routes`: rotas HTTP
-- `src/controllers`: camada HTTP
-- `src/services`: regras de negócio
-- `src/database`: client do Drizzle e schema do banco
-- `src/test`: setup e fixtures para integração
-
-## Endpoints
-
-- `GET /healthcheck`
-- `GET /api/healthcheck`
-- `GET /api/items`
-- `GET /api/items/:id`
-- `POST /api/items`
-- `PUT /api/items/:id`
-- `DELETE /api/items/:id`
+- CRUD de exemplo em `/api/items`
+- validacao com `zod`
+- testes unitarios e de integracao com `node:test` e `supertest`
 
 ## Scripts
 
 - `npm run dev`: sobe a API em modo watch
 - `npm run build`: compila para `dist`
-- `npm test`: executa testes unitários
-- `npm run test:integration`: executa integrações HTTP com banco real
-- `npm run test:all`: executa unitários + integração
-- `npm run validate`: roda lint, typecheck e testes unitários
+- `npm test`: executa testes unitarios
+- `npm run test:integration`: executa integracoes HTTP com banco real
+- `npm run test:all`: executa unitarios + integracao
+- `npm run validate`: roda lint, typecheck e testes unitarios
 
 ## Banco de dados
 

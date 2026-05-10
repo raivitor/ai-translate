@@ -1,28 +1,13 @@
-# boilerplate-2026
+# Ai Translate
 
-Boilerplate com `web` em `Next.js 16 + React 19` e `api` em `Express + TypeScript + Drizzle + Postgres`.
+Aplicacao baseada no `boilerplate-2026`, com `web` em `Next.js 16 + React 19` e `api` em `Express + TypeScript + Drizzle + Postgres`.
 
-## Criar um projeto novo
+## Requisitos
 
-O fluxo principal agora é:
+- Node 24
+- npm 11+
 
-```bash
-npm run bootstrap -- meu-projeto
-``` 
-
-Isso atualiza os nomes do projeto, `package.json`, lockfiles, `README`s e os defaults de banco em
-`api/.env.example` e `api/docker-compose.yml`.
-
-O formato abaixo tambem funciona:
-
-```bash
-npm run bootstrap --meu-projeto
-```
-
-Mas no `npm 11` ele gera um warning de CLI desconhecida. O formato com `-- meu-projeto` eh o
-recomendado.
-
-## Depois do bootstrap
+## Setup inicial
 
 ```bash
 cp api/.env.example api/.env
@@ -38,15 +23,16 @@ docker compose -f api/docker-compose.yml up -d
 npm run db:migrate --prefix api
 ```
 
-Para desenvolvimento:
+## Desenvolvimento
 
 ```bash
 npm run dev --prefix api
 npm run dev --prefix web
 ```
 
-Para validar tudo:
+## Qualidade
 
 ```bash
 npm run ci:simulate
+npm run format:all
 ```
