@@ -4,7 +4,7 @@ Backend local em `Express + TypeScript`, com:
 
 - healthcheck em `/healthcheck` e `/api/healthcheck`
 - CORS configurado para o renderer Electron/Vite
-- estrutura preparada para futura criacao de sessoes OpenAI Realtime
+- criacao de client secrets efemeros em `/api/realtime/translations/client-secret`
 - testes unitarios e de integracao com `node:test` e `supertest`
 
 ## Scripts
@@ -19,5 +19,5 @@ Backend local em `Express + TypeScript`, com:
 ## Configuracao
 
 1. Copie `api/.env.example` para `api/.env`.
-2. Configure `OPENAI_API_KEY` quando iniciar a integracao real com a OpenAI.
+2. Configure `OPENAI_API_KEY` para criar sessoes reais com a OpenAI.
 3. Mantenha `OPENAI_REALTIME_MODEL=gpt-realtime-translate`.

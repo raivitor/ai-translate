@@ -1,10 +1,20 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, session } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDevelopment = process.env.NODE_ENV !== 'production'
 const rendererDevUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
+
+function configureMediaPermissions(): void {
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission === 'media')
+  })
+
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return permission === 'media'
+  })
+}
 
 async function createMainWindow(): Promise<void> {
   const window = new BrowserWindow({
@@ -31,6 +41,7 @@ async function createMainWindow(): Promise<void> {
 }
 
 await app.whenReady()
+configureMediaPermissions()
 await createMainWindow()
 
 app.on('activate', () => {
