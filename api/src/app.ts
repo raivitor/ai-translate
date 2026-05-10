@@ -1,10 +1,8 @@
 import cors from 'cors'
-import { sql } from 'drizzle-orm'
 import type { Application, NextFunction, Request, Response } from 'express'
 import express from 'express'
 
 import { createCorsOptions } from './config/cors.js'
-import { db } from './database/client.js'
 import router from './routes/routes.js'
 
 const app: Application = express()
@@ -14,20 +12,12 @@ app.use(express.json())
 
 app.use('/api', router)
 
-app.get(['/healthcheck', '/api/healthcheck'], async (_req: Request, res: Response) => {
-  try {
-    await db.execute(sql`SELECT 1`)
-    return res.status(200).json({
-      status: 'OK',
-      database: 'connected',
-      timestamp: new Date().toISOString(),
-    })
-  } catch {
-    return res.status(503).json({
-      status: 'ERROR',
-      database: 'disconnected',
-    })
-  }
+app.get(['/healthcheck', '/api/healthcheck'], (_req: Request, res: Response) => {
+  return res.status(200).json({
+    status: 'OK',
+    service: 'ai-translate-api',
+    timestamp: new Date().toISOString(),
+  })
 })
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

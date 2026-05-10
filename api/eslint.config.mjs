@@ -23,8 +23,6 @@ export default tseslint.config(
       'coverage/**',
       '.env',
       '.env.*',
-      'drizzle/**', // Drizzle gera arquivos que não devemos lintar
-      'drizzle.config.ts',
       'eslint.config.mjs',
       '**/*.d.ts',
     ],
@@ -83,11 +81,10 @@ export default tseslint.config(
             err: true,
             params: true,
             args: true,
-            db: true, // Se usar database, ele reclama de db
           },
         },
       ],
-      'unicorn/no-null': 'off', // O Prisma/Drizzle usam null, essa regra atrapalha muito em DBs.
+      'unicorn/no-null': 'off',
       'unicorn/filename-case': 'off', // Mantemos nomes atuais dos arquivos para evitar renomeação em massa.
 
       // --- Qualidade Geral ---

@@ -2,14 +2,29 @@
   "name": "ai-translate",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "api",
+    "desktop"
+  ],
   "scripts": {
     "bootstrap": "node scripts/bootstrap.js",
-    "ci:api": "npm run validate --prefix api",
-    "ci:web": "npm run validate --prefix web",
-    "ci:simulate": "npm run ci:api && npm run ci:web",
-    "format:api": "npm run format:fix --prefix api",
-    "format:web": "npm run format:fix --prefix web",
-    "format:all": "npm run format:api && npm run format:web"
+    "dev": "concurrently -k -n api,desktop \"npm run dev:api\" \"npm run dev:desktop\"",
+    "dev:api": "npm run dev --workspace api",
+    "dev:desktop": "npm run dev --workspace desktop",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm run test --workspaces",
+    "validate": "npm run validate --workspaces",
+    "ci:api": "npm run validate --workspace api",
+    "ci:desktop": "npm run validate --workspace desktop",
+    "ci:simulate": "npm run validate",
+    "format:api": "npm run format:fix --workspace api",
+    "format:desktop": "npm run format:fix --workspace desktop",
+    "format:all": "npm run format:fix --workspaces"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
   }
 }

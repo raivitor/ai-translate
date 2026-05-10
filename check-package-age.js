@@ -61,7 +61,7 @@ const getDaysAgo = dateString => {
 const getTargets = cwd => {
   const workspaceTargets = [
     { label: 'API', packageJsonPath: path.join(cwd, 'api', 'package.json') },
-    { label: 'WEB', packageJsonPath: path.join(cwd, 'web', 'package.json') },
+    { label: 'DESKTOP', packageJsonPath: path.join(cwd, 'desktop', 'package.json') },
   ].filter(target => fs.existsSync(target.packageJsonPath))
 
   if (workspaceTargets.length > 0) {
@@ -76,7 +76,7 @@ const getTargets = cwd => {
   const currentDirName = path.basename(cwd).toLowerCase()
   const labelByDir = {
     api: 'API',
-    web: 'WEB',
+    desktop: 'DESKTOP',
   }
 
   return [

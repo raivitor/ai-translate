@@ -1,10 +1,10 @@
 # Ai Translate API
 
-API em `Express + TypeScript + Drizzle + Postgres`, com:
+Backend local em `Express + TypeScript`, com:
 
 - healthcheck em `/healthcheck` e `/api/healthcheck`
-- CRUD de exemplo em `/api/items`
-- validacao com `zod`
+- CORS configurado para o renderer Electron/Vite
+- estrutura preparada para futura criacao de sessoes OpenAI Realtime
 - testes unitarios e de integracao com `node:test` e `supertest`
 
 ## Scripts
@@ -12,15 +12,12 @@ API em `Express + TypeScript + Drizzle + Postgres`, com:
 - `npm run dev`: sobe a API em modo watch
 - `npm run build`: compila para `dist`
 - `npm test`: executa testes unitarios
-- `npm run test:integration`: executa integracoes HTTP com banco real
+- `npm run test:integration`: executa integracoes HTTP locais
 - `npm run test:all`: executa unitarios + integracao
 - `npm run validate`: roda lint, typecheck e testes unitarios
 
-## Banco de dados
+## Configuracao
 
 1. Copie `api/.env.example` para `api/.env`.
-2. Configure `DATABASE_URL`.
-3. Configure `TEST_DATABASE_URL` apontando para um banco de testes dedicado.
-4. Rode `npm run db:migrate`.
-
-Para desenvolvimento local, o `docker-compose.yml` sobe um Postgres simples para a `DATABASE_URL`.
+2. Configure `OPENAI_API_KEY` quando iniciar a integracao real com a OpenAI.
+3. Mantenha `OPENAI_REALTIME_MODEL=gpt-realtime-translate`.

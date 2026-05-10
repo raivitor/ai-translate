@@ -1,0 +1,50 @@
+{
+  "name": "ai-translate-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ai Translate desktop shell built with Electron, Vite and React.",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "engines": {
+    "node": "24.x",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:electron": "wait-on http://127.0.0.1:5173 && cross-env NODE_ENV=development electron .",
+    "build": "tsc -p tsconfig.json && vite build",
+    "start": "electron .",
+    "lint": "CI=true eslint .",
+    "lint:fix": "CI=true eslint . --fix",
+    "format:check": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test",
+    "validate": "npm run lint && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.2",
+    "electron": "^39.2.6",
+    "react": "19.2.5",
+    "react-dom": "19.2.5",
+    "vite": "^7.2.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.0",
+    "wait-on": "^9.0.3"
+  }
+}
