@@ -48,8 +48,10 @@ integrationDescribe('Route integration: realtime translations', () => {
 
     let requestBody: OpenAiRequestBody | undefined
     let authorizationHeader: string | null = null
+    let openAiUrl = ''
 
-    globalThis.fetch = (_input, init) => {
+    globalThis.fetch = (input, init) => {
+      openAiUrl = String(input)
       authorizationHeader = new Headers(init?.headers).get('Authorization')
       const rawRequestBody = init?.body
 
@@ -76,6 +78,7 @@ integrationDescribe('Route integration: realtime translations', () => {
     assert.strictEqual(response.status, 200)
     assert.strictEqual(body.value, 'ek_test_secret')
     assert.strictEqual(body.expiresAt, 1_756_310_470)
+    assert.strictEqual(openAiUrl, 'https://api.openai.com/v1/realtime/translations/client_secrets')
     assert.strictEqual(authorizationHeader, 'Bearer test-openai-key')
     assert.strictEqual(requestBody?.session?.model, 'gpt-realtime-translate')
     assert.strictEqual(requestBody?.session?.audio?.output?.language, 'en')

@@ -61,11 +61,11 @@ export function App() {
   })
 
   const inputDevices = useMemo(
-    () => devices.filter(device => device.kind === 'audioinput'),
+    () => devices.filter((device) => device.kind === 'audioinput'),
     [devices],
   )
   const outputDevices = useMemo(
-    () => devices.filter(device => device.kind === 'audiooutput'),
+    () => devices.filter((device) => device.kind === 'audiooutput'),
     [devices],
   )
 
@@ -73,34 +73,41 @@ export function App() {
     const availableDevices = await navigator.mediaDevices.enumerateDevices()
     setDevices(availableDevices)
 
-    const availableInputs = availableDevices.filter(device => device.kind === 'audioinput')
-    const availableOutputs = availableDevices.filter(device => device.kind === 'audiooutput')
+    const availableInputs = availableDevices.filter(
+      (device) => device.kind === 'audioinput',
+    )
+    const availableOutputs = availableDevices.filter(
+      (device) => device.kind === 'audiooutput',
+    )
     const preferredOutput = availableOutputs.find(isVirtualCableDevice)
 
-    setInputDeviceId(currentDeviceId => {
+    setInputDeviceId((currentDeviceId) => {
       const currentInputStillExists = availableInputs.some(
-        device => device.deviceId === currentDeviceId,
+        (device) => device.deviceId === currentDeviceId,
       )
 
-      return currentInputStillExists ? currentDeviceId : availableInputs[0]?.deviceId || ''
+      return currentInputStillExists
+        ? currentDeviceId
+        : availableInputs[0]?.deviceId || ''
     })
-    setOutputDeviceId(
-      currentDeviceId => {
-        const currentOutputStillExists = availableOutputs.some(
-          device => device.deviceId === currentDeviceId,
-        )
+    setOutputDeviceId((currentDeviceId) => {
+      const currentOutputStillExists = availableOutputs.some(
+        (device) => device.deviceId === currentDeviceId,
+      )
 
-        return currentOutputStillExists
-          ? currentDeviceId
-          : preferredOutput?.deviceId || availableOutputs[0]?.deviceId || ''
-      },
-    )
+      return currentOutputStillExists
+        ? currentDeviceId
+        : preferredOutput?.deviceId || availableOutputs[0]?.deviceId || ''
+    })
   }
 
   async function requestDeviceAccess(): Promise<void> {
     try {
       setError('')
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: false,
+      })
 
       for (const track of stream.getTracks()) {
         track.stop()
@@ -117,7 +124,7 @@ export function App() {
   }
 
   function handleTranscript(event: TranslationTranscriptEvent): void {
-    setTranscript(currentTranscript => ({
+    setTranscript((currentTranscript) => ({
       ...currentTranscript,
       [event.kind]: `${currentTranscript[event.kind]}${event.text}`,
     }))
@@ -142,7 +149,11 @@ export function App() {
       activeSession.current?.stop()
       activeSession.current = undefined
       setStatus('error')
-      setError(caughtError instanceof Error ? caughtError.message : 'Falha ao iniciar traducao.')
+      setError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Falha ao iniciar traducao.',
+      )
     }
   }
 
@@ -167,29 +178,32 @@ export function App() {
     }
   }, [])
 
-  const isRunning = status === 'requesting-media' || status === 'connecting' || status === 'connected'
+  const isRunning =
+    status === 'requesting-media' ||
+    status === 'connecting' ||
+    status === 'connected'
   const canStart = status === 'idle' || status === 'error'
 
   return (
-    <main className='app-shell'>
-      <section className='toolbar' aria-labelledby='app-title'>
+    <main className="app-shell">
+      <section className="toolbar" aria-labelledby="app-title">
         <div>
-          <span className='eyebrow'>Windows desktop audio bridge</span>
-          <h1 id='app-title'>Ai Translate</h1>
+          <span className="eyebrow">Windows desktop audio bridge</span>
+          <h1 id="app-title">Ai Translate</h1>
         </div>
 
-        <div className='status-badge' data-state={status}>
+        <div className="status-badge" data-state={status}>
           {getStatusLabel(status)}
         </div>
       </section>
 
-      <section className='control-grid' aria-label='Controles de traducao'>
-        <div className='control-panel'>
-          <label htmlFor='input-device'>Microfone de entrada</label>
+      <section className="control-grid" aria-label="Controles de traducao">
+        <div className="control-panel">
+          <label htmlFor="input-device">Microfone de entrada</label>
           <select
-            id='input-device'
+            id="input-device"
             value={inputDeviceId}
-            onChange={event => setInputDeviceId(event.target.value)}
+            onChange={(event) => setInputDeviceId(event.target.value)}
             disabled={isRunning}
           >
             {inputDevices.map((device, index) => (
@@ -200,12 +214,12 @@ export function App() {
           </select>
         </div>
 
-        <div className='control-panel'>
-          <label htmlFor='output-device'>Saida traduzida para o Meet</label>
+        <div className="control-panel">
+          <label htmlFor="output-device">Saida traduzida para o Meet</label>
           <select
-            id='output-device'
+            id="output-device"
             value={outputDeviceId}
-            onChange={event => setOutputDeviceId(event.target.value)}
+            onChange={(event) => setOutputDeviceId(event.target.value)}
             disabled={isRunning}
           >
             {outputDevices.map((device, index) => (
@@ -216,21 +230,21 @@ export function App() {
           </select>
         </div>
 
-        <div className='control-panel compact'>
+        <div className="control-panel compact">
           <span>Modelo</span>
           <strong>gpt-realtime-translate</strong>
         </div>
 
-        <div className='control-panel compact'>
+        <div className="control-panel compact">
           <span>Idioma de saida</span>
           <strong>Ingles</strong>
         </div>
       </section>
 
-      <section className='actions' aria-label='Acoes'>
+      <section className="actions" aria-label="Acoes">
         <button
-          type='button'
-          className='secondary-button'
+          type="button"
+          className="secondary-button"
           onClick={() => {
             void requestDeviceAccess()
           }}
@@ -239,8 +253,8 @@ export function App() {
           Liberar dispositivos
         </button>
         <button
-          type='button'
-          className='primary-button'
+          type="button"
+          className="primary-button"
           onClick={() => {
             void start()
           }}
@@ -248,14 +262,19 @@ export function App() {
         >
           Iniciar traducao
         </button>
-        <button type='button' className='danger-button' onClick={stop} disabled={!isRunning}>
+        <button
+          type="button"
+          className="danger-button"
+          onClick={stop}
+          disabled={!isRunning}
+        >
           Parar
         </button>
       </section>
 
-      {error && <p className='error-message'>{error}</p>}
+      {error && <p className="error-message">{error}</p>}
 
-      <section className='transcript-grid' aria-label='Legendas'>
+      <section className="transcript-grid" aria-label="Legendas">
         <article>
           <h2>Original</h2>
           <p>{transcript.source || 'Aguardando fala do microfone...'}</p>
@@ -266,7 +285,7 @@ export function App() {
         </article>
       </section>
 
-      <section className='runtime-strip' aria-label='Ambiente'>
+      <section className="runtime-strip" aria-label="Ambiente">
         <div>
           <span>API local</span>
           <strong>{apiBaseUrl}</strong>
