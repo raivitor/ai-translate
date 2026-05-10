@@ -1,0 +1,15 @@
+{
+  "name": "boilerplate-2026",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "bootstrap": "node scripts/bootstrap.js",
+    "ci:api": "npm run validate --prefix api",
+    "ci:web": "npm run validate --prefix web",
+    "ci:simulate": "npm run ci:api && npm run ci:web",
+    "format:api": "npm run format:fix --prefix api",
+    "format:web": "npm run format:fix --prefix web",
+    "format:all": "npm run format:api && npm run format:web"
+  }
+}

@@ -1,0 +1,25 @@
+# Dependências e Build
+node_modules
+dist
+build
+
+# Variáveis de Ambiente
+.env
+.env.*
+
+# O Prettier não deve tocar nos SQLs gerados, pois são logs históricos
+drizzle/
+migrations/
+
+# Deixe o npm/pnpm/yarn gerenciar isso, formatar pode quebrar checksums
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# Testes e Cobertura
+coverage/
+
+# Arquivos de Sistema e IDEs
+.DS_Store
+.vscode
+.idea

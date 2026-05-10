@@ -1,0 +1,61 @@
+# ---------------------------------
+# 1. Dependências e Logs
+# ---------------------------------
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+*.log
+
+# ---------------------------------
+# 2. Build e Transpilação
+# ---------------------------------
+dist/
+build/
+# Cache do TypeScript incremental
+*.tsbuildinfo
+
+# ---------------------------------
+# 3. Variáveis de Ambiente (SEGURANÇA)
+# ---------------------------------
+.env
+.env.production
+.env.development
+.env.test
+.env.local
+# !.env.example # Descomente se quiser forçar o commit do exemplo
+
+# ---------------------------------
+# 4. Arquivos de Sistema (CRÍTICO)
+# ---------------------------------
+.DS_Store
+Thumbs.db
+.classpath
+.project
+.settings/
+
+# ---------------------------------
+# 5. IDEs e Editores
+# ---------------------------------
+.vscode/
+.idea/
+*.sublime-workspace
+
+# ---------------------------------
+# 6. Testes e Coverage
+# ---------------------------------
+coverage/
+.nyc_output/
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# ---------------------------------
+# 7. Drizzle & Bancos Locais
+# ---------------------------------
+# SQLite local (se um dia usar para testes)
+*.sqlite
+*.sqlite-journal
+
+# IMPORTANTE: A pasta 'drizzle/' (onde ficam os .sql)
+# DEVE ser commitada, então NÃO coloque ela aqui.

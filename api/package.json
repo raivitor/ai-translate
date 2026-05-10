@@ -1,0 +1,62 @@
+{
+  "name": "boilerplate-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Express + Drizzle boilerplate API with a sample CRUD and healthcheck.",
+  "type": "module",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "start": "node --enable-source-maps dist/server.js",
+    "test": "npm run test:unit",
+    "test:unit": "NODE_ENV=test node --env-file=.env --import tsx --test --test-force-exit --test-reporter spec --test-concurrency=1 src/**/*.unit.spec.ts",
+    "test:integration": "RUN_INTEGRATION_TESTS=true NODE_ENV=test node --env-file=.env ./node_modules/.bin/drizzle-kit migrate && RUN_INTEGRATION_TESTS=true NODE_ENV=test node --env-file=.env --import tsx --test --test-force-exit --test-reporter spec --test-concurrency=1 src/**/*.integration.spec.ts",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:watch": "NODE_ENV=test node --env-file=.env --import tsx --test --watch src/**/*.spec.ts",
+    "test:coverage": "RUN_INTEGRATION_TESTS=true NODE_ENV=test node --env-file=.env ./node_modules/.bin/drizzle-kit migrate && RUN_INTEGRATION_TESTS=true NODE_ENV=test node --env-file=.env --import tsx --test --test-force-exit --experimental-test-coverage --test-concurrency=1 src/**/*.spec.ts",
+    "lint": "CI=true eslint .",
+    "lint:fix": "CI=true eslint . --fix",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio",
+    "db:reset": "tsx --env-file=.env src/scripts/reset-db.ts && npm run db:migrate",
+    "format:check": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "validate": "npm run lint && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.12.0",
+    "@types/pg": "^8.20.0",
+    "@types/supertest": "^7.2.0",
+    "drizzle-kit": "^0.31.10",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-n": "^17.24.0",
+    "eslint-plugin-prettier": "^5.5.5",
+    "eslint-plugin-security": "^4.0.0",
+    "eslint-plugin-simple-import-sort": "^13.0.0",
+    "eslint-plugin-unicorn": "^64.0.0",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.2.1",
+    "pg": "^8.20.0",
+    "supertest": "^7.2.2",
+    "zod": "^4.3.6"
+  }
+}
