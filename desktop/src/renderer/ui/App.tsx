@@ -116,6 +116,7 @@ export function App() {
 
       <div style={{ display: 'grid', gap: '2rem' }}>
         <TranslationSession
+          sessionKey="outbound"
           title="Outbound (Seu Microfone ➔ Meet)"
           apiBaseUrl={apiBaseUrl}
           targetLanguage="en"
@@ -129,6 +130,7 @@ export function App() {
         />
 
         <TranslationSession
+          sessionKey="inbound"
           title="Inbound (Áudio do Meet ➔ Seus Fones)"
           apiBaseUrl={apiBaseUrl}
           targetLanguage="pt"

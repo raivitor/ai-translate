@@ -34,6 +34,7 @@ function getStatusLabel(status: TranslationStatus): string {
 }
 
 export interface TranslationSessionProps {
+  sessionKey: string;
   title: string;
   apiBaseUrl: string;
   targetLanguage: "en" | "pt";
@@ -48,6 +49,7 @@ export interface TranslationSessionProps {
 }
 
 export function TranslationSession({
+  sessionKey,
   title,
   apiBaseUrl,
   targetLanguage,
@@ -61,8 +63,12 @@ export function TranslationSession({
   disableAudioDSP,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined);
-  const [inputDeviceId, setInputDeviceId] = useState(initialInputDeviceId);
-  const [outputDeviceId, setOutputDeviceId] = useState(initialOutputDeviceId);
+  const [inputDeviceId, setInputDeviceId] = useState(() => {
+    return localStorage.getItem(`ai_translate_${sessionKey}_input`) || initialInputDeviceId;
+  });
+  const [outputDeviceId, setOutputDeviceId] = useState(() => {
+    return localStorage.getItem(`ai_translate_${sessionKey}_output`) || initialOutputDeviceId;
+  });
   const [enableTranscription, setEnableTranscription] = useState(true);
   const [status, setStatus] = useState<TranslationStatus>("idle");
   const [error, setError] = useState("");
@@ -74,6 +80,7 @@ export function TranslationSession({
   // Update device IDs if the current ones become invalid and new defaults are provided
   useEffect(() => {
     if (
+      inputDevices.length > 0 &&
       initialInputDeviceId &&
       (!inputDeviceId ||
         !inputDevices.find((d) => d.deviceId === inputDeviceId))
@@ -84,6 +91,7 @@ export function TranslationSession({
 
   useEffect(() => {
     if (
+      outputDevices.length > 0 &&
       initialOutputDeviceId &&
       (!outputDeviceId ||
         !outputDevices.find((d) => d.deviceId === outputDeviceId))
@@ -91,6 +99,19 @@ export function TranslationSession({
       setOutputDeviceId(initialOutputDeviceId);
     }
   }, [initialOutputDeviceId, outputDevices, outputDeviceId]);
+
+  // Persist selections to localStorage
+  useEffect(() => {
+    if (inputDeviceId) {
+      localStorage.setItem(`ai_translate_${sessionKey}_input`, inputDeviceId);
+    }
+  }, [inputDeviceId, sessionKey]);
+
+  useEffect(() => {
+    if (outputDeviceId) {
+      localStorage.setItem(`ai_translate_${sessionKey}_output`, outputDeviceId);
+    }
+  }, [outputDeviceId, sessionKey]);
 
   function handleTranscript(event: TranslationTranscriptEvent): void {
     setTranscript((currentTranscript) => ({
