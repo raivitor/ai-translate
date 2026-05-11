@@ -1,93 +1,96 @@
 export type TranslationStatus =
-  | 'idle'
-  | 'requesting-media'
-  | 'connecting'
-  | 'connected'
-  | 'stopping'
-  | 'error'
+  | "idle"
+  | "requesting-media"
+  | "connecting"
+  | "connected"
+  | "stopping"
+  | "error";
 
 export type TranslationTranscriptEvent = {
-  kind: 'source' | 'target'
-  text: string
-}
+  kind: "source" | "target";
+  text: string;
+};
 
 export type TranslationSessionCallbacks = {
-  onStatusChange: (status: TranslationStatus) => void
-  onTranscript: (event: TranslationTranscriptEvent) => void
-}
+  onStatusChange: (status: TranslationStatus) => void;
+  onTranscript: (event: TranslationTranscriptEvent) => void;
+};
 
 export type StartTranslationSessionOptions = {
-  apiBaseUrl: string
-  inputDeviceId: string
-  outputDeviceId: string
-  targetLanguage: string
-  callbacks: TranslationSessionCallbacks
-}
+  apiBaseUrl: string;
+  inputDeviceId: string;
+  outputDeviceId: string;
+  targetLanguage: string;
+  enableTranscription?: boolean;
+  disableAudioDSP?: boolean;
+  callbacks: TranslationSessionCallbacks;
+};
 
 type TranslationClientSecretResponse = {
-  value?: unknown
-  error?: unknown
-  details?: unknown
-}
+  value?: unknown;
+  error?: unknown;
+  details?: unknown;
+};
 
 type RealtimeServerEvent = {
-  type?: unknown
-  delta?: unknown
-  transcript?: unknown
-}
+  type?: unknown;
+  delta?: unknown;
+  transcript?: unknown;
+};
 
 type AudioElementWithSink = HTMLAudioElement & {
-  setSinkId?: (sinkId: string) => Promise<void>
-}
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
 
 export type ActiveTranslationSession = {
-  stop: () => void
-}
+  stop: () => void;
+};
 
 async function createTranslationClientSecret(
   apiBaseUrl: string,
   targetLanguage: string,
+  enableTranscription?: boolean,
 ): Promise<string> {
   const response = await fetch(
     `${apiBaseUrl}/api/realtime/translations/client-secret`,
     {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
-      body: JSON.stringify({ targetLanguage }),
+      body: JSON.stringify({ targetLanguage, enableTranscription }),
     },
-  )
+  );
 
   const body = (await response
     .json()
-    .catch(() => ({}))) as TranslationClientSecretResponse
+    .catch(() => ({}))) as TranslationClientSecretResponse;
 
   if (!response.ok) {
     const errorDetails =
-      typeof body.error === 'string'
+      typeof body.error === "string"
         ? body.error
-        : `HTTP ${response.status} from local API`
+        : `HTTP ${response.status} from local API`;
 
     throw new Error(
       `Could not create a Realtime translation client secret: ${errorDetails}`,
-    )
+    );
   }
 
-  if (typeof body.value !== 'string') {
+  if (typeof body.value !== "string") {
     throw new Error(
-      'The local API returned an invalid translation client secret.',
-    )
+      "The local API returned an invalid translation client secret.",
+    );
   }
 
-  return body.value
+  return body.value;
 }
 
 function parseRealtimeEvent(rawData: string): RealtimeServerEvent | undefined {
   try {
-    return JSON.parse(rawData) as RealtimeServerEvent
+    return JSON.parse(rawData) as RealtimeServerEvent;
   } catch {
-    return undefined
+    return undefined;
   }
 }
 
@@ -95,79 +98,79 @@ function addDataChannelListeners(
   dataChannel: RTCDataChannel,
   callbacks: TranslationSessionCallbacks,
 ): void {
-  dataChannel.addEventListener('message', (event) => {
-    if (typeof event.data !== 'string') {
-      return
+  dataChannel.addEventListener("message", (event) => {
+    if (typeof event.data !== "string") {
+      return;
     }
 
-    const realtimeEvent = parseRealtimeEvent(event.data)
+    const realtimeEvent = parseRealtimeEvent(event.data);
 
     if (!realtimeEvent) {
-      return
+      return;
     }
 
     if (
-      (realtimeEvent.type === 'session.input_transcript.delta' ||
+      (realtimeEvent.type === "session.input_transcript.delta" ||
         realtimeEvent.type ===
-          'conversation.item.input_audio_transcription.delta') &&
-      typeof realtimeEvent.delta === 'string'
+          "conversation.item.input_audio_transcription.delta") &&
+      typeof realtimeEvent.delta === "string"
     ) {
-      callbacks.onTranscript({ kind: 'source', text: realtimeEvent.delta })
+      callbacks.onTranscript({ kind: "source", text: realtimeEvent.delta });
     }
 
     if (
-      (realtimeEvent.type === 'session.output_transcript.delta' ||
-        realtimeEvent.type === 'response.audio_transcript.delta' ||
-        realtimeEvent.type === 'response.output_audio_transcript.delta') &&
-      typeof realtimeEvent.delta === 'string'
+      (realtimeEvent.type === "session.output_transcript.delta" ||
+        realtimeEvent.type === "response.audio_transcript.delta" ||
+        realtimeEvent.type === "response.output_audio_transcript.delta") &&
+      typeof realtimeEvent.delta === "string"
     ) {
-      callbacks.onTranscript({ kind: 'target', text: realtimeEvent.delta })
+      callbacks.onTranscript({ kind: "target", text: realtimeEvent.delta });
     }
 
     if (
       realtimeEvent.type ===
-        'conversation.item.input_audio_transcription.completed' &&
-      typeof realtimeEvent.transcript === 'string'
+        "conversation.item.input_audio_transcription.completed" &&
+      typeof realtimeEvent.transcript === "string"
     ) {
       callbacks.onTranscript({
-        kind: 'source',
+        kind: "source",
         text: `\n`,
-      })
+      });
     }
 
     if (
-      (realtimeEvent.type === 'response.audio_transcript.done' ||
-        realtimeEvent.type === 'session.output_transcript.completed') &&
-      typeof realtimeEvent.transcript === 'string'
+      (realtimeEvent.type === "response.audio_transcript.done" ||
+        realtimeEvent.type === "session.output_transcript.completed") &&
+      typeof realtimeEvent.transcript === "string"
     ) {
       callbacks.onTranscript({
-        kind: 'target',
+        kind: "target",
         text: `\n`,
-      })
+      });
     }
-  })
+  });
 }
 
 async function getErrorResponseMessage(response: Response): Promise<string> {
-  const responseBody = await response.text().catch(() => '')
-  const trimmedBody = responseBody.trim()
+  const responseBody = await response.text().catch(() => "");
+  const trimmedBody = responseBody.trim();
 
   if (!trimmedBody) {
-    return `HTTP ${response.status} ${response.statusText}`.trim()
+    return `HTTP ${response.status} ${response.statusText}`.trim();
   }
 
-  return `HTTP ${response.status} ${response.statusText}: ${trimmedBody}`.trim()
+  return `HTTP ${response.status} ${response.statusText}: ${trimmedBody}`.trim();
 }
 
 function stopStream(stream: MediaStream): void {
   for (const track of stream.getTracks()) {
-    track.stop()
+    track.stop();
   }
 }
 
 function closeDataChannel(dataChannel: RTCDataChannel): void {
-  if (dataChannel.readyState !== 'closed') {
-    dataChannel.close()
+  if (dataChannel.readyState !== "closed") {
+    dataChannel.close();
   }
 }
 
@@ -176,131 +179,140 @@ export async function startTranslationSession({
   inputDeviceId,
   outputDeviceId,
   targetLanguage,
+  enableTranscription,
+  disableAudioDSP,
   callbacks,
 }: StartTranslationSessionOptions): Promise<ActiveTranslationSession> {
-  callbacks.onStatusChange('requesting-media')
+  callbacks.onStatusChange("requesting-media");
 
-  const audioConstraints: MediaTrackConstraints = {
-    echoCancellation: true,
-    noiseSuppression: true,
-    autoGainControl: true,
-  }
+  const audioConstraints: MediaTrackConstraints = disableAudioDSP
+    ? {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
+    : {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
 
   if (inputDeviceId) {
-    audioConstraints.deviceId = { exact: inputDeviceId }
+    audioConstraints.deviceId = { exact: inputDeviceId };
   }
 
   const inputStream = await navigator.mediaDevices.getUserMedia({
     audio: audioConstraints,
     video: false,
-  })
+  });
 
-  callbacks.onStatusChange('connecting')
+  callbacks.onStatusChange("connecting");
 
-  let peerConnection: RTCPeerConnection | undefined
-  let dataChannel: RTCDataChannel | undefined
-  const audioElement: AudioElementWithSink = document.createElement('audio')
+  let peerConnection: RTCPeerConnection | undefined;
+  let dataChannel: RTCDataChannel | undefined;
+  const audioElement: AudioElementWithSink = document.createElement("audio");
 
   try {
     const clientSecret = await createTranslationClientSecret(
       apiBaseUrl,
       targetLanguage,
-    )
-    peerConnection = new RTCPeerConnection()
+      enableTranscription,
+    );
+    peerConnection = new RTCPeerConnection();
 
-    audioElement.autoplay = true
-    audioElement.controls = false
-    audioElement.style.display = 'none'
+    audioElement.autoplay = true;
+    audioElement.controls = false;
+    audioElement.style.display = "none";
 
     if (outputDeviceId) {
       if (!audioElement.setSinkId) {
         throw new Error(
-          'This runtime does not support selecting an audio output device.',
-        )
+          "This runtime does not support selecting an audio output device.",
+        );
       }
 
-      await audioElement.setSinkId(outputDeviceId)
+      await audioElement.setSinkId(outputDeviceId);
     }
 
-    document.body.append(audioElement)
+    document.body.append(audioElement);
 
-    const [inputTrack] = inputStream.getAudioTracks()
+    const [inputTrack] = inputStream.getAudioTracks();
 
     if (!inputTrack) {
-      throw new Error('No microphone audio track was captured.')
+      throw new Error("No microphone audio track was captured.");
     }
 
-    peerConnection.addTrack(inputTrack, inputStream)
+    peerConnection.addTrack(inputTrack, inputStream);
 
-    dataChannel = peerConnection.createDataChannel('oai-events')
-    addDataChannelListeners(dataChannel, callbacks)
+    dataChannel = peerConnection.createDataChannel("oai-events");
+    addDataChannelListeners(dataChannel, callbacks);
 
-    peerConnection.addEventListener('track', (event) => {
-      const [remoteStream] = event.streams
+    peerConnection.addEventListener("track", (event) => {
+      const [remoteStream] = event.streams;
 
       if (!remoteStream) {
-        return
+        return;
       }
 
-      audioElement.srcObject = remoteStream
+      audioElement.srcObject = remoteStream;
       void audioElement.play().catch(() => {
-        callbacks.onStatusChange('error')
-      })
-    })
+        callbacks.onStatusChange("error");
+      });
+    });
 
-    const offer = await peerConnection.createOffer()
-    await peerConnection.setLocalDescription(offer)
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
 
     if (!offer.sdp) {
-      throw new Error('WebRTC did not create an SDP offer.')
+      throw new Error("WebRTC did not create an SDP offer.");
     }
 
     const sdpResponse = await fetch(
-      'https://api.openai.com/v1/realtime/translations/calls',
+      "https://api.openai.com/v1/realtime/translations/calls",
       {
-        method: 'POST',
+        method: "POST",
         body: offer.sdp,
         headers: {
           Authorization: `Bearer ${clientSecret}`,
-          'Content-Type': 'application/sdp',
+          "Content-Type": "application/sdp",
         },
       },
-    )
+    );
 
     if (!sdpResponse.ok) {
       throw new Error(
         `OpenAI rejected the WebRTC SDP offer: ${await getErrorResponseMessage(sdpResponse)}`,
-      )
+      );
     }
 
     await peerConnection.setRemoteDescription({
-      type: 'answer',
+      type: "answer",
       sdp: await sdpResponse.text(),
-    })
+    });
 
-    callbacks.onStatusChange('connected')
+    callbacks.onStatusChange("connected");
 
     return {
       stop: () => {
-        callbacks.onStatusChange('stopping')
-        closeDataChannel(dataChannel as RTCDataChannel)
-        peerConnection?.close()
-        stopStream(inputStream)
-        audioElement.srcObject = null
-        audioElement.remove()
-        callbacks.onStatusChange('idle')
+        callbacks.onStatusChange("stopping");
+        closeDataChannel(dataChannel as RTCDataChannel);
+        peerConnection?.close();
+        stopStream(inputStream);
+        audioElement.srcObject = null;
+        audioElement.remove();
+        callbacks.onStatusChange("idle");
       },
-    }
+    };
   } catch (error) {
     if (dataChannel) {
-      closeDataChannel(dataChannel)
+      closeDataChannel(dataChannel);
     }
 
-    peerConnection?.close()
-    audioElement.srcObject = null
-    audioElement.remove()
-    stopStream(inputStream)
+    peerConnection?.close();
+    audioElement.srcObject = null;
+    audioElement.remove();
+    stopStream(inputStream);
 
-    throw error
+    throw error;
   }
 }
