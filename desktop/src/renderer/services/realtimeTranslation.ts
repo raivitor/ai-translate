@@ -117,6 +117,7 @@ function addDataChannelListeners(
 
     if (
       (realtimeEvent.type === 'session.output_transcript.delta' ||
+        realtimeEvent.type === 'response.audio_transcript.delta' ||
         realtimeEvent.type === 'response.output_audio_transcript.delta') &&
       typeof realtimeEvent.delta === 'string'
     ) {
@@ -130,7 +131,18 @@ function addDataChannelListeners(
     ) {
       callbacks.onTranscript({
         kind: 'source',
-        text: `${realtimeEvent.transcript}\n`,
+        text: `\n`,
+      })
+    }
+
+    if (
+      (realtimeEvent.type === 'response.audio_transcript.done' ||
+        realtimeEvent.type === 'session.output_transcript.completed') &&
+      typeof realtimeEvent.transcript === 'string'
+    ) {
+      callbacks.onTranscript({
+        kind: 'target',
+        text: `\n`,
       })
     }
   })
