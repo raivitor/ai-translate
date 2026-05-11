@@ -13,6 +13,13 @@ type OpenAiTranslationClientSecretResponse = {
   session?: unknown
 }
 
+type OpenAiTranslationAudioInputConfig = {
+  transcription?: {
+    model: 'gpt-realtime-whisper'
+  }
+  noise_reduction: null
+}
+
 const SUPPORTED_TARGET_LANGUAGES = new Set(['en', 'pt'])
 const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600
 const OPENAI_TRANSLATION_CLIENT_SECRETS_URL =
@@ -47,6 +54,16 @@ router.post('/realtime/translations/client-secret', async (req, res) => {
     })
   }
 
+  const audioInputConfig: OpenAiTranslationAudioInputConfig = {
+    noise_reduction: null,
+  }
+
+  if (enableTranscription) {
+    audioInputConfig.transcription = {
+      model: 'gpt-realtime-whisper',
+    }
+  }
+
   const openAiResponse = await fetch(OPENAI_TRANSLATION_CLIENT_SECRETS_URL, {
     method: 'POST',
     headers: {
@@ -62,14 +79,7 @@ router.post('/realtime/translations/client-secret', async (req, res) => {
       session: {
         model: process.env.OPENAI_REALTIME_MODEL ?? 'gpt-realtime-translate',
         audio: {
-          input: {
-            transcription: enableTranscription
-              ? {
-                  model: 'gpt-realtime-whisper',
-                }
-              : null,
-            noise_reduction: null,
-          },
+          input: audioInputConfig,
           output: {
             language: targetLanguage,
           },

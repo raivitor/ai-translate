@@ -241,7 +241,7 @@ export function TranslationSession({
               onChange={(e) => setEnableTranscription(e.target.checked)}
               disabled={isRunning}
             />
-            Gerar transcrição de texto
+            Gerar legendas de texto
           </label>
         </div>
       </section>
@@ -275,7 +275,9 @@ export function TranslationSession({
           {enableTranscription ? (
             <p>{transcript.source || "Aguardando..."}</p>
           ) : (
-            <p style={{ fontStyle: "italic", opacity: 0.7 }}>Transcrição desabilitada</p>
+            <p style={{ fontStyle: "italic", opacity: 0.7 }}>
+              Legendas desabilitadas. Audio traduzido continua ativo.
+            </p>
           )}
         </article>
         <article>
@@ -283,7 +285,9 @@ export function TranslationSession({
           {enableTranscription ? (
             <p>{transcript.target || "Aguardando..."}</p>
           ) : (
-            <p style={{ fontStyle: "italic", opacity: 0.7 }}>Transcrição desabilitada</p>
+            <p style={{ fontStyle: "italic", opacity: 0.7 }}>
+              Legendas desabilitadas. Audio traduzido continua ativo.
+            </p>
           )}
         </article>
       </section>

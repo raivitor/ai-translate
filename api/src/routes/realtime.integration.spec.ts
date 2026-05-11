@@ -50,8 +50,9 @@ integrationDescribe('Route integration: realtime translations', () => {
     let authorizationHeader: string | null = null
     let openAiUrl = ''
 
-    globalThis.fetch = (input, init) => {
-      openAiUrl = String(input)
+    globalThis.fetch = (input: string | URL | Request, init) => {
+      assert.ok(typeof input === 'string')
+      openAiUrl = input
       authorizationHeader = new Headers(init?.headers).get('Authorization')
       const rawRequestBody = init?.body
 
@@ -87,6 +88,42 @@ integrationDescribe('Route integration: realtime translations', () => {
       'gpt-realtime-whisper',
     )
     assert.strictEqual(requestBody?.session?.audio?.input?.noise_reduction, null)
+  })
+
+  test('POST /api/realtime/translations/client-secret omits input transcription when disabled', async () => {
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+    process.env.OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
+
+    let requestBody: OpenAiRequestBody | undefined
+
+    globalThis.fetch = (_input, init) => {
+      const rawRequestBody = init?.body
+
+      if (typeof rawRequestBody !== 'string') {
+        throw new TypeError('Expected OpenAI request body to be a JSON string.')
+      }
+
+      requestBody = JSON.parse(rawRequestBody) as OpenAiRequestBody
+
+      return Promise.resolve(
+        Response.json({
+          value: 'ek_test_secret',
+          expires_at: 1_756_310_470,
+          session: { id: 'sess_test', type: 'translation' },
+        }),
+      )
+    }
+
+    const response = await api
+      .post('/api/realtime/translations/client-secret')
+      .send({ targetLanguage: 'en', enableTranscription: false })
+    const body = getResponseBody<ClientSecretBody>(response)
+
+    assert.strictEqual(response.status, 200)
+    assert.strictEqual(body.value, 'ek_test_secret')
+    assert.strictEqual(requestBody?.session?.audio?.output?.language, 'en')
+    assert.strictEqual(requestBody?.session?.audio?.input?.noise_reduction, null)
+    assert.ok(!('transcription' in (requestBody?.session?.audio?.input ?? {})))
   })
 
   test('POST /api/realtime/translations/client-secret rejects unsupported languages before calling OpenAI', async () => {
