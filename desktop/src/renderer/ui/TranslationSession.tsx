@@ -280,7 +280,11 @@ export function TranslationSession({
         </article>
         <article>
           <h2>Traducao</h2>
-          <p>{transcript.target || "Aguardando..."}</p>
+          {enableTranscription ? (
+            <p>{transcript.target || "Aguardando..."}</p>
+          ) : (
+            <p style={{ fontStyle: "italic", opacity: 0.7 }}>Transcrição desabilitada</p>
+          )}
         </article>
       </section>
     </div>
