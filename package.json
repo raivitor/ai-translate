@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "bootstrap": "node scripts/bootstrap.js",
+    "start": "npm run dev",
     "dev": "concurrently -k -n api,desktop \"npm run dev:api\" \"npm run dev:desktop\"",
     "dev:api": "npm run dev --workspace api",
     "dev:desktop": "npm run dev --workspace desktop",

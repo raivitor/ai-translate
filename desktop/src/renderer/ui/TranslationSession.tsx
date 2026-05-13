@@ -63,11 +63,19 @@ export function TranslationSession({
   disableAudioDSP,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined);
+  const hasManualInputSelection = useRef(false);
+  const hasManualOutputSelection = useRef(false);
   const [inputDeviceId, setInputDeviceId] = useState(() => {
-    return localStorage.getItem(`ai_translate_${sessionKey}_input`) || initialInputDeviceId;
+    return (
+      localStorage.getItem(`ai_translate_${sessionKey}_input`) ||
+      initialInputDeviceId
+    );
   });
   const [outputDeviceId, setOutputDeviceId] = useState(() => {
-    return localStorage.getItem(`ai_translate_${sessionKey}_output`) || initialOutputDeviceId;
+    return (
+      localStorage.getItem(`ai_translate_${sessionKey}_output`) ||
+      initialOutputDeviceId
+    );
   });
   const [enableTranscription, setEnableTranscription] = useState(true);
   const [status, setStatus] = useState<TranslationStatus>("idle");
@@ -77,28 +85,68 @@ export function TranslationSession({
     target: "",
   });
 
-  // Update device IDs if the current ones become invalid and new defaults are provided
+  // Update device IDs when better defaults appear or current selections disappear.
   useEffect(() => {
-    if (
+    let updateTimeout: number | undefined;
+    const currentInputExists = inputDevices.some(
+      (device) => device.deviceId === inputDeviceId,
+    );
+    const shouldUseInitialInput =
       inputDevices.length > 0 &&
       initialInputDeviceId &&
       (!inputDeviceId ||
-        !inputDevices.find((d) => d.deviceId === inputDeviceId))
-    ) {
-      setInputDeviceId(initialInputDeviceId);
+        !currentInputExists ||
+        (!hasManualInputSelection.current &&
+          inputDeviceId !== initialInputDeviceId));
+
+    if (shouldUseInitialInput) {
+      updateTimeout = window.setTimeout(() => {
+        setInputDeviceId(initialInputDeviceId);
+      }, 0);
     }
+
+    return () => {
+      if (updateTimeout) {
+        window.clearTimeout(updateTimeout);
+      }
+    };
   }, [initialInputDeviceId, inputDevices, inputDeviceId]);
 
   useEffect(() => {
-    if (
+    let updateTimeout: number | undefined;
+    const currentOutputExists = outputDevices.some(
+      (device) => device.deviceId === outputDeviceId,
+    );
+    const shouldUseInitialOutput =
       outputDevices.length > 0 &&
       initialOutputDeviceId &&
       (!outputDeviceId ||
-        !outputDevices.find((d) => d.deviceId === outputDeviceId))
-    ) {
-      setOutputDeviceId(initialOutputDeviceId);
+        !currentOutputExists ||
+        (!hasManualOutputSelection.current &&
+          outputDeviceId !== initialOutputDeviceId));
+
+    if (shouldUseInitialOutput) {
+      updateTimeout = window.setTimeout(() => {
+        setOutputDeviceId(initialOutputDeviceId);
+      }, 0);
     }
+
+    return () => {
+      if (updateTimeout) {
+        window.clearTimeout(updateTimeout);
+      }
+    };
   }, [initialOutputDeviceId, outputDevices, outputDeviceId]);
+
+  function handleInputDeviceChange(deviceId: string): void {
+    hasManualInputSelection.current = true;
+    setInputDeviceId(deviceId);
+  }
+
+  function handleOutputDeviceChange(deviceId: string): void {
+    hasManualOutputSelection.current = true;
+    setOutputDeviceId(deviceId);
+  }
 
   // Persist selections to localStorage
   useEffect(() => {
@@ -189,7 +237,7 @@ export function TranslationSession({
           <select
             id={`input-device-${title}`}
             value={inputDeviceId}
-            onChange={(event) => setInputDeviceId(event.target.value)}
+            onChange={(event) => handleInputDeviceChange(event.target.value)}
             disabled={isRunning}
           >
             {inputDevices.map((device, index) => (
@@ -205,7 +253,7 @@ export function TranslationSession({
           <select
             id={`output-device-${title}`}
             value={outputDeviceId}
-            onChange={(event) => setOutputDeviceId(event.target.value)}
+            onChange={(event) => handleOutputDeviceChange(event.target.value)}
             disabled={isRunning}
           >
             {outputDevices.map((device, index) => (
