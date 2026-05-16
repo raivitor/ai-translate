@@ -46,7 +46,7 @@ router.post('/realtime/translations/client-secret', async (req, res) => {
 
   const body = req.body as TranslationClientSecretRequest
   const targetLanguage = resolveTargetLanguage(body.targetLanguage)
-  const enableTranscription = body.enableTranscription !== false // Defaults to true if not strictly false
+  const enableTranscription = body.enableTranscription === true
 
   if (!targetLanguage) {
     return res.status(400).json({

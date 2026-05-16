@@ -77,7 +77,7 @@ export function TranslationSession({
       initialOutputDeviceId
     );
   });
-  const [enableTranscription, setEnableTranscription] = useState(true);
+  const [enableTranscription, setEnableTranscription] = useState(false);
   const [status, setStatus] = useState<TranslationStatus>("idle");
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState<TranscriptState>({
@@ -330,13 +330,7 @@ export function TranslationSession({
         </article>
         <article>
           <h2>Traducao</h2>
-          {enableTranscription ? (
-            <p>{transcript.target || "Aguardando..."}</p>
-          ) : (
-            <p style={{ fontStyle: "italic", opacity: 0.7 }}>
-              Legendas desabilitadas. Audio traduzido continua ativo.
-            </p>
-          )}
+          <p>{transcript.target || "Aguardando..."}</p>
         </article>
       </section>
     </div>

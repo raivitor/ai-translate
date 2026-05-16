@@ -42,7 +42,7 @@ integrationDescribe('Route integration: realtime translations', () => {
     process.env.OPENAI_REALTIME_MODEL = originalOpenAiRealtimeModel
   })
 
-  test('POST /api/realtime/translations/client-secret creates a short-lived translation secret', async () => {
+  test('POST /api/realtime/translations/client-secret creates a short-lived translation secret with input transcription enabled', async () => {
     process.env.OPENAI_API_KEY = 'test-openai-key'
     process.env.OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
 
@@ -73,7 +73,7 @@ integrationDescribe('Route integration: realtime translations', () => {
 
     const response = await api
       .post('/api/realtime/translations/client-secret')
-      .send({ targetLanguage: 'en' })
+      .send({ targetLanguage: 'en', enableTranscription: true })
     const body = getResponseBody<ClientSecretBody>(response)
 
     assert.strictEqual(response.status, 200)
@@ -88,6 +88,42 @@ integrationDescribe('Route integration: realtime translations', () => {
       'gpt-realtime-whisper',
     )
     assert.strictEqual(requestBody?.session?.audio?.input?.noise_reduction, null)
+  })
+
+  test('POST /api/realtime/translations/client-secret omits input transcription by default', async () => {
+    process.env.OPENAI_API_KEY = 'test-openai-key'
+    process.env.OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
+
+    let requestBody: OpenAiRequestBody | undefined
+
+    globalThis.fetch = (_input, init) => {
+      const rawRequestBody = init?.body
+
+      if (typeof rawRequestBody !== 'string') {
+        throw new TypeError('Expected OpenAI request body to be a JSON string.')
+      }
+
+      requestBody = JSON.parse(rawRequestBody) as OpenAiRequestBody
+
+      return Promise.resolve(
+        Response.json({
+          value: 'ek_test_secret',
+          expires_at: 1_756_310_470,
+          session: { id: 'sess_test', type: 'translation' },
+        }),
+      )
+    }
+
+    const response = await api
+      .post('/api/realtime/translations/client-secret')
+      .send({ targetLanguage: 'en' })
+    const body = getResponseBody<ClientSecretBody>(response)
+
+    assert.strictEqual(response.status, 200)
+    assert.strictEqual(body.value, 'ek_test_secret')
+    assert.strictEqual(requestBody?.session?.audio?.output?.language, 'en')
+    assert.strictEqual(requestBody?.session?.audio?.input?.noise_reduction, null)
+    assert.ok(!('transcription' in (requestBody?.session?.audio?.input ?? {})))
   })
 
   test('POST /api/realtime/translations/client-secret omits input transcription when disabled', async () => {

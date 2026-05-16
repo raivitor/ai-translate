@@ -98,6 +98,9 @@ function addDataChannelListeners(
   dataChannel: RTCDataChannel,
   callbacks: TranslationSessionCallbacks,
 ): void {
+  let sourceTranscriptHasDelta = false;
+  let targetTranscriptHasDelta = false;
+
   dataChannel.addEventListener("message", (event) => {
     if (typeof event.data !== "string") {
       return;
@@ -115,6 +118,7 @@ function addDataChannelListeners(
           "conversation.item.input_audio_transcription.delta") &&
       typeof realtimeEvent.delta === "string"
     ) {
+      sourceTranscriptHasDelta = true;
       callbacks.onTranscript({ kind: "source", text: realtimeEvent.delta });
     }
 
@@ -124,6 +128,7 @@ function addDataChannelListeners(
         realtimeEvent.type === "response.output_audio_transcript.delta") &&
       typeof realtimeEvent.delta === "string"
     ) {
+      targetTranscriptHasDelta = true;
       callbacks.onTranscript({ kind: "target", text: realtimeEvent.delta });
     }
 
@@ -134,8 +139,9 @@ function addDataChannelListeners(
     ) {
       callbacks.onTranscript({
         kind: "source",
-        text: `\n`,
+        text: sourceTranscriptHasDelta ? "\n" : `${realtimeEvent.transcript}\n`,
       });
+      sourceTranscriptHasDelta = false;
     }
 
     if (
@@ -145,8 +151,9 @@ function addDataChannelListeners(
     ) {
       callbacks.onTranscript({
         kind: "target",
-        text: `\n`,
+        text: targetTranscriptHasDelta ? "\n" : `${realtimeEvent.transcript}\n`,
       });
+      targetTranscriptHasDelta = false;
     }
   });
 }
