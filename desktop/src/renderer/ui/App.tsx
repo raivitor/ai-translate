@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { ApiKeySettings } from "./ApiKeySettings.js";
 import { TranslationSession } from "./TranslationSession.js";
-
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
 
 function normalizeDeviceLabel(device: MediaDeviceInfo): string {
   return device.label.toLowerCase().replaceAll(/[\s_]+/g, "-");
@@ -65,6 +64,16 @@ function isHeadphones(device: MediaDeviceInfo): boolean {
 export function App() {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [error, setError] = useState("");
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(
+    null,
+  );
+  const [showSettings, setShowSettings] = useState(false);
+
+  useEffect(() => {
+    void window.aiTranslate!.hasApiKey().then((configured) => {
+      setApiKeyConfigured(configured);
+    });
+  }, []);
 
   const inputDevices = useMemo(
     () => devices.filter((device) => device.kind === "audioinput"),
@@ -155,61 +164,89 @@ export function App() {
           <span className="eyebrow">Linux virtual audio bridge</span>
           <h1 id="app-title">Ai Translate</h1>
         </div>
+        {apiKeyConfigured && !showSettings && (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              setShowSettings(true);
+            }}
+            aria-label="Configurações"
+          >
+            Configurações
+          </button>
+        )}
       </section>
 
-      <section
-        className="actions"
-        aria-label="Acoes globais"
-        style={{ marginBottom: "2rem" }}
-      >
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => {
-            void requestDeviceAccess();
+      {(apiKeyConfigured === false || showSettings) && (
+        <ApiKeySettings
+          hasExistingKey={apiKeyConfigured === true}
+          onSaved={() => {
+            setApiKeyConfigured(true);
+            setShowSettings(false);
           }}
-        >
-          Liberar acesso aos dispositivos
-        </button>
-      </section>
-
-      {error && <p className="error-message">{error}</p>}
-
-      <div className="sessions-grid">
-        <TranslationSession
-          sessionKey="outbound"
-          title="Outbound (Falar pt-br)"
-          apiBaseUrl={apiBaseUrl}
-          targetLanguage="en"
-          inputDevices={inputDevices}
-          outputDevices={outputDevices}
-          initialInputDeviceId={defaultOutboundInputId}
-          initialOutputDeviceId={defaultOutboundOutputId}
-          inputLabel="Seu microfone físico"
-          outputLabel="Saída para o Meet (AI-Translate-To-Meet)"
-          disableAudioDSP={true}
+          onCleared={() => {
+            setApiKeyConfigured(false);
+            setShowSettings(false);
+          }}
         />
+      )}
 
-        <TranslationSession
-          sessionKey="inbound"
-          title="Inbound (Ouvir pt-br)"
-          apiBaseUrl={apiBaseUrl}
-          targetLanguage="pt"
-          inputDevices={inputDevices}
-          outputDevices={outputDevices}
-          initialInputDeviceId={defaultInboundInputId}
-          initialOutputDeviceId={defaultInboundOutputId}
-          inputLabel="Áudio do Meet (AI-Translate-Meet-Audio-Capture)"
-          outputLabel="Seus fones de ouvido"
-          disableAudioDSP={true}
-        />
-      </div>
+      {apiKeyConfigured === true && !showSettings && (
+        <>
+          <section
+            className="actions"
+            aria-label="Acoes globais"
+            style={{ marginBottom: "2rem" }}
+          >
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                void requestDeviceAccess();
+              }}
+            >
+              Liberar acesso aos dispositivos
+            </button>
+          </section>
 
-      <section
-        className="runtime-strip"
-        aria-label="Ambiente"
-        style={{ marginTop: "2rem" }}
-      ></section>
+          {error && <p className="error-message">{error}</p>}
+
+          <div className="sessions-grid">
+            <TranslationSession
+              sessionKey="outbound"
+              title="Outbound (Falar pt-br)"
+              targetLanguage="en"
+              inputDevices={inputDevices}
+              outputDevices={outputDevices}
+              initialInputDeviceId={defaultOutboundInputId}
+              initialOutputDeviceId={defaultOutboundOutputId}
+              inputLabel="Seu microfone físico"
+              outputLabel="Saída para o Meet (AI-Translate-To-Meet)"
+              disableAudioDSP={true}
+            />
+
+            <TranslationSession
+              sessionKey="inbound"
+              title="Inbound (Ouvir pt-br)"
+              targetLanguage="pt"
+              inputDevices={inputDevices}
+              outputDevices={outputDevices}
+              initialInputDeviceId={defaultInboundInputId}
+              initialOutputDeviceId={defaultInboundOutputId}
+              inputLabel="Áudio do Meet (AI-Translate-Meet-Audio-Capture)"
+              outputLabel="Seus fones de ouvido"
+              disableAudioDSP={true}
+            />
+          </div>
+
+          <section
+            className="runtime-strip"
+            aria-label="Ambiente"
+            style={{ marginTop: "2rem" }}
+          ></section>
+        </>
+      )}
     </main>
   );
 }

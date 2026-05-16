@@ -4,28 +4,20 @@
   "description": "",
   "private": true,
   "workspaces": [
-    "api",
     "desktop"
   ],
   "scripts": {
     "bootstrap": "node scripts/bootstrap.js",
     "start": "npm run dev",
-    "dev": "concurrently -k -n api,desktop \"npm run dev:api\" \"npm run dev:desktop\"",
-    "dev:api": "npm run dev --workspace api",
-    "dev:desktop": "npm run dev --workspace desktop",
+    "dev": "npm run dev --workspace desktop",
     "build": "npm run build --workspaces",
     "lint": "npm run lint --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "test": "npm run test --workspaces",
     "validate": "npm run validate --workspaces",
-    "ci:api": "npm run validate --workspace api",
     "ci:desktop": "npm run validate --workspace desktop",
     "ci:simulate": "npm run validate",
-    "format:api": "npm run format:fix --workspace api",
     "format:desktop": "npm run format:fix --workspace desktop",
     "format:all": "npm run format:fix --workspaces"
-  },
-  "devDependencies": {
-    "concurrently": "^9.2.1"
   }
 }

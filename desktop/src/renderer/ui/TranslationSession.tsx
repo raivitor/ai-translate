@@ -36,7 +36,6 @@ function getStatusLabel(status: TranslationStatus): string {
 export interface TranslationSessionProps {
   sessionKey: string;
   title: string;
-  apiBaseUrl: string;
   targetLanguage: "en" | "pt";
   inputDevices: MediaDeviceInfo[];
   outputDevices: MediaDeviceInfo[];
@@ -50,7 +49,6 @@ export interface TranslationSessionProps {
 export function TranslationSession({
   sessionKey,
   title,
-  apiBaseUrl,
   targetLanguage,
   inputDevices,
   outputDevices,
@@ -212,7 +210,6 @@ export function TranslationSession({
 
     try {
       activeSession.current = await startTranslationSession({
-        apiBaseUrl,
         inputDeviceId,
         outputDeviceId,
         targetLanguage,

@@ -19,19 +19,12 @@ export type TranslationSessionCallbacks = {
 };
 
 export type StartTranslationSessionOptions = {
-  apiBaseUrl: string;
   inputDeviceId: string;
   outputDeviceId: string;
   targetLanguage: string;
   enableTranscription?: boolean;
   disableAudioDSP?: boolean;
   callbacks: TranslationSessionCallbacks;
-};
-
-type TranslationClientSecretResponse = {
-  value?: unknown;
-  error?: unknown;
-  details?: unknown;
 };
 
 type RealtimeServerEvent = {
@@ -84,43 +77,15 @@ export type ActiveTranslationSession = {
 };
 
 async function createTranslationClientSecret(
-  apiBaseUrl: string,
   targetLanguage: string,
   enableTranscription?: boolean,
 ): Promise<string> {
-  const response = await fetch(
-    `${apiBaseUrl}/api/realtime/translations/client-secret`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ targetLanguage, enableTranscription }),
-    },
-  );
+  const result = await window.aiTranslate!.createClientSecret({
+    targetLanguage,
+    enableTranscription,
+  });
 
-  const body = (await response
-    .json()
-    .catch(() => ({}))) as TranslationClientSecretResponse;
-
-  if (!response.ok) {
-    const errorDetails =
-      typeof body.error === "string"
-        ? body.error
-        : `HTTP ${response.status} from local API`;
-
-    throw new Error(
-      `Could not create a Realtime translation client secret: ${errorDetails}`,
-    );
-  }
-
-  if (typeof body.value !== "string") {
-    throw new Error(
-      "The local API returned an invalid translation client secret.",
-    );
-  }
-
-  return body.value;
+  return result.value;
 }
 
 function parseRealtimeEvent(rawData: string): RealtimeServerEvent | undefined {
@@ -318,7 +283,6 @@ function closeDataChannel(dataChannel: RTCDataChannel): void {
 }
 
 export async function startTranslationSession({
-  apiBaseUrl,
   inputDeviceId,
   outputDeviceId,
   targetLanguage,
@@ -373,7 +337,6 @@ export async function startTranslationSession({
     });
 
   const clientSecretPromise = createTranslationClientSecret(
-    apiBaseUrl,
     targetLanguage,
     enableTranscription,
   ).then((clientSecret) => {

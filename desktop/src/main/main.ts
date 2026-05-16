@@ -1,6 +1,14 @@
-import { app, BrowserWindow, session } from "electron";
+import { app, BrowserWindow, ipcMain, session } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  clearApiKey,
+  hasApiKey,
+  loadApiKey,
+  saveApiKey,
+} from "./apiKeyStore.js";
+import { createClientSecret } from "./openaiRealtimeHandler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isDevelopment = process.env.NODE_ENV !== "production";
@@ -99,6 +107,40 @@ async function createMainWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  ipcMain.handle("aiTranslate:setApiKey", (_event, key: string) => {
+    saveApiKey(key);
+  });
+
+  ipcMain.handle("aiTranslate:hasApiKey", () => {
+    return hasApiKey();
+  });
+
+  ipcMain.handle("aiTranslate:clearApiKey", () => {
+    clearApiKey();
+  });
+
+  ipcMain.handle(
+    "aiTranslate:createClientSecret",
+    async (
+      _event,
+      params: { targetLanguage: string; enableTranscription?: boolean },
+    ) => {
+      const apiKey = loadApiKey();
+
+      if (!apiKey) {
+        throw new Error(
+          "OPENAI_API_KEY is not configured. Please set it in Settings.",
+        );
+      }
+
+      return createClientSecret({
+        targetLanguage: params.targetLanguage,
+        enableTranscription: params.enableTranscription,
+        apiKey,
+      });
+    },
+  );
+
   configureMediaPermissions();
   await createMainWindow();
 
