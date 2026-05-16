@@ -63,7 +63,6 @@ function isHeadphones(device: MediaDeviceInfo): boolean {
 }
 
 export function App() {
-  const platform = window.aiTranslate?.platform ?? "browser";
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [error, setError] = useState("");
 
@@ -176,10 +175,10 @@ export function App() {
 
       {error && <p className="error-message">{error}</p>}
 
-      <div style={{ display: "grid", gap: "2rem" }}>
+      <div className="sessions-grid">
         <TranslationSession
           sessionKey="outbound"
-          title="Outbound (Seu Microfone ➔ Meet)"
+          title="Outbound (Falar pt-br)"
           apiBaseUrl={apiBaseUrl}
           targetLanguage="en"
           inputDevices={inputDevices}
@@ -188,12 +187,11 @@ export function App() {
           initialOutputDeviceId={defaultOutboundOutputId}
           inputLabel="Seu microfone físico"
           outputLabel="Saída para o Meet (AI-Translate-To-Meet)"
-          targetLanguageLabel="Inglês"
         />
 
         <TranslationSession
           sessionKey="inbound"
-          title="Inbound (Áudio do Meet ➔ Seus Fones)"
+          title="Inbound (Ouvir pt-br)"
           apiBaseUrl={apiBaseUrl}
           targetLanguage="pt"
           inputDevices={inputDevices}
@@ -202,7 +200,6 @@ export function App() {
           initialOutputDeviceId={defaultInboundOutputId}
           inputLabel="Áudio do Meet (AI-Translate-Meet-Audio-Capture)"
           outputLabel="Seus fones de ouvido"
-          targetLanguageLabel="Português"
           disableAudioDSP={true}
         />
       </div>
@@ -211,16 +208,7 @@ export function App() {
         className="runtime-strip"
         aria-label="Ambiente"
         style={{ marginTop: "2rem" }}
-      >
-        <div>
-          <span>API local</span>
-          <strong>{apiBaseUrl}</strong>
-        </div>
-        <div>
-          <span>Plataforma</span>
-          <strong>{platform}</strong>
-        </div>
-      </section>
+      ></section>
     </main>
   );
 }

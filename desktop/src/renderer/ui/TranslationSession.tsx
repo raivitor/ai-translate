@@ -44,7 +44,6 @@ export interface TranslationSessionProps {
   initialOutputDeviceId: string;
   inputLabel: string;
   outputLabel: string;
-  targetLanguageLabel: string;
   disableAudioDSP?: boolean;
 }
 
@@ -59,7 +58,6 @@ export function TranslationSession({
   initialOutputDeviceId,
   inputLabel,
   outputLabel,
-  targetLanguageLabel,
   disableAudioDSP,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined);
@@ -264,16 +262,6 @@ export function TranslationSession({
           </select>
         </div>
 
-        <div className="control-panel compact">
-          <span>Modelo</span>
-          <strong>gpt-realtime-translate</strong>
-        </div>
-
-        <div className="control-panel compact">
-          <span>Idioma de saida</span>
-          <strong>{targetLanguageLabel}</strong>
-        </div>
-
         <div className="control-panel compact" style={{ alignSelf: "center" }}>
           <label
             style={{
@@ -292,27 +280,26 @@ export function TranslationSession({
             Gerar legendas de texto
           </label>
         </div>
-      </section>
-
-      <section className="actions" aria-label="Acoes">
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => {
-            void start();
-          }}
-          disabled={!canStart}
-        >
-          Iniciar
-        </button>
-        <button
-          type="button"
-          className="danger-button"
-          onClick={stop}
-          disabled={!isRunning}
-        >
-          Parar
-        </button>
+        <div className="actions" aria-label="Acoes">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              void start();
+            }}
+            disabled={!canStart}
+          >
+            Iniciar
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={stop}
+            disabled={!isRunning}
+          >
+            Parar
+          </button>
+        </div>
       </section>
 
       {error && <p className="error-message">{error}</p>}
