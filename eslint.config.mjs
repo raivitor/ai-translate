@@ -10,8 +10,7 @@ export default tseslint.config(
     ignores: [
       ".agents/**",
       ".codex/**",
-      "../.agents/**",
-      "../.codex/**",
+      "check-package-age.cjs",
       "dist/**",
       "node_modules/**",
       "eslint.config.mjs",

@@ -1,23 +1,52 @@
 {
   "name": "ai-translate",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.1.0",
+  "description": "Ai Translate desktop shell built with Electron, Vite and React.",
   "private": true,
-  "workspaces": [
-    "desktop"
-  ],
+  "type": "module",
+  "main": "dist/main/main.js",
+  "engines": {
+    "node": "24.x",
+    "npm": ">=11.0.0"
+  },
   "scripts": {
-    "bootstrap": "node scripts/bootstrap.js",
-    "start": "npm run dev",
-    "dev": "npm run dev --workspace desktop",
-    "build": "npm run build --workspaces",
-    "lint": "npm run lint --workspaces",
-    "typecheck": "npm run typecheck --workspaces",
-    "test": "npm run test --workspaces",
-    "validate": "npm run validate --workspaces",
-    "ci:desktop": "npm run validate --workspace desktop",
-    "ci:simulate": "npm run validate",
-    "format:desktop": "npm run format:fix --workspace desktop",
-    "format:all": "npm run format:fix --workspaces"
+    "start": "electron .",
+    "dev": "concurrently -k -n vite,electron \"npm run dev:renderer\" \"npm run dev:electron\"",
+    "dev:renderer": "vite --host 127.0.0.1",
+    "dev:electron": "npm run build:main && cross-env NODE_ENV=development electron .",
+    "build:main": "tsc -p tsconfig.build.json",
+    "build": "npm run build:main && vite build",
+    "lint": "cross-env CI=true eslint .",
+    "lint:fix": "cross-env CI=true eslint . --fix",
+    "format:check": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "cross-env NODE_ENV=test node --import tsx --test --test-reporter spec src/**/*.unit.spec.ts",
+    "validate": "npm run lint && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "electron": "^42.0.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "vite": "^8.0.11"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "eslint": "^10.3.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.2",
+    "wait-on": "^9.0.6"
   }
 }

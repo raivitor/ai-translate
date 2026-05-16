@@ -6,22 +6,21 @@ Ai Translate is a Linux desktop app for real-time Google Meet translation. Elect
 
 ## Project Structure & Module Organization
 
-Workspace packages:
+This is a single-package Electron + Vite + React app. Main code is in `src/main`, preload in `src/preload`, and renderer UI/services in `src/renderer`.
 
-- `desktop/`: Electron + Vite + React app. Main code is in `desktop/src/main`, preload in `desktop/src/preload`, and renderer UI/services in `desktop/src/renderer`.
-  - `desktop/src/main/apiKeyStore.ts`: encrypts/decrypts the `OPENAI_API_KEY` via `safeStorage` and persists it to `userData/api-key.enc`.
-  - `desktop/src/main/openaiRealtimeHandler.ts`: creates ephemeral client secrets by calling the OpenAI Realtime API.
-  - IPC channels (`aiTranslate:*`) bridge the main process to the renderer via the preload.
-- Root utilities live in `scripts/`, `setup-audio.sh`, and `check-package-age.js`. Do not edit generated `dist/` output.
+- `src/main/apiKeyStore.ts`: encrypts/decrypts the `OPENAI_API_KEY` via `safeStorage` and persists it to `userData/api-key.enc`.
+- `src/main/openaiRealtimeHandler.ts`: creates ephemeral client secrets by calling the OpenAI Realtime API.
+- IPC channels (`aiTranslate:*`) bridge the main process to the renderer via the preload.
+- Root utilities live in `setup-audio.sh` and `check-package-age.cjs`. Do not edit generated `dist/` output.
 
 ## Build, Test, and Development Commands
 
 - `nvm use && npm install`: use Node 24 and install dependencies.
 - `./setup-audio.sh`: create Linux virtual audio devices.
 - `npm start` or `npm run dev`: run the desktop app.
-- `npm run build`: compile all workspaces.
+- `npm run build`: compile the app.
 - `npm run validate`: run lint, typecheck, and tests.
-- `npm run test --workspace desktop`: run desktop unit tests.
+- `npm test`: run unit tests.
 
 ## Coding Style & Naming Conventions
 
