@@ -1,6 +1,6 @@
 # Ai Translate
 
-Aplicacao desktop para preparar traducao em tempo real de conversas no Google Meet usando `Electron + React`, backend local em `Node/Express`, OpenAI Realtime Translation via WebRTC e roteamento de audio virtual no Linux com PipeWire/PulseAudio.
+Aplicacao desktop para preparar traducao em tempo real de conversas no Google Meet usando `Electron + React`, backend local em `Node/Express`, OpenAI Realtime Translation via WebRTC e roteamento de audio virtual no Linux com PipeWire.
 
 O MVP atual captura seu microfone no Electron, cria uma sessao efemera de
 Realtime Translation no backend local, envia audio por WebRTC para a OpenAI e
@@ -10,8 +10,8 @@ toca o audio traduzido em ingles no dispositivo de saida escolhido.
 
 - Node 24
 - npm 11+
-- Linux com PipeWire + WirePlumber + `pipewire-pulse`, ou PulseAudio
-- `pactl` disponivel no PATH
+- Linux com PipeWire + WirePlumber + `pipewire-pulse`
+- Ferramentas PipeWire disponiveis no PATH: `pw-loopback`, `pw-cli` e `wpctl`
 
 ## Setup inicial
 
@@ -34,7 +34,7 @@ O renderer Electron usa `http://127.0.0.1:5173` em desenvolvimento e a API local
 
 ## Setup de audio Linux
 
-`./setup-audio.sh` cria dispositivos virtuais temporarios na sessao de audio do usuario:
+`./setup-audio.sh` cria dispositivos virtuais temporarios na sessao de audio do usuario usando `pw-loopback`:
 
 - `AI-Translate-To-Meet`: saida onde o app toca a traducao PT -> EN.
 - `AI-Translate-Virtual-Mic-for-Meet`: microfone virtual que o Meet deve usar.
@@ -47,6 +47,8 @@ Comandos uteis:
 ./setup-audio.sh --check
 ./setup-audio.sh --remove
 ```
+
+O script foi pensado para o stack PipeWire nativo do Linux Mint 22.3/Ubuntu 24.04. O `pipewire-pulse` ainda e necessario porque Electron e Chrome acessam os dispositivos de audio pela camada de compatibilidade PulseAudio sobre PipeWire.
 
 ## Fluxo de audio
 
