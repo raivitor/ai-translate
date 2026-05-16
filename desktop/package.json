@@ -21,7 +21,7 @@
     "format:check": "prettier --check .",
     "format:fix": "prettier --write .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test",
+    "test": "cross-env NODE_ENV=test node --import tsx --test --test-reporter spec src/**/*.unit.spec.ts",
     "validate": "npm run lint && npm run typecheck && npm test"
   },
   "dependencies": {
@@ -44,6 +44,7 @@
     "cross-env": "^10.1.0",
     "globals": "^17.6.0",
     "prettier": "^3.8.3",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.2",
     "wait-on": "^9.0.6"
