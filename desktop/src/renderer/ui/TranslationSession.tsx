@@ -63,6 +63,8 @@ export function TranslationSession({
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined);
   const hasManualInputSelection = useRef(false);
   const hasManualOutputSelection = useRef(false);
+  const pendingTranscript = useRef<TranscriptState>({ source: "", target: "" });
+  const transcriptFlushFrame = useRef<number | undefined>(undefined);
   const [inputDeviceId, setInputDeviceId] = useState(() => {
     return (
       localStorage.getItem(`ai_translate_${sessionKey}_input`) ||
@@ -159,16 +161,54 @@ export function TranslationSession({
     }
   }, [outputDeviceId, sessionKey]);
 
-  function handleTranscript(event: TranslationTranscriptEvent): void {
+  function resetTranscriptBuffer(): void {
+    pendingTranscript.current = { source: "", target: "" };
+
+    if (transcriptFlushFrame.current !== undefined) {
+      window.cancelAnimationFrame(transcriptFlushFrame.current);
+      transcriptFlushFrame.current = undefined;
+    }
+  }
+
+  function flushTranscript(): void {
+    transcriptFlushFrame.current = undefined;
+
+    const queuedTranscript = pendingTranscript.current;
+    pendingTranscript.current = { source: "", target: "" };
+
+    if (!queuedTranscript.source && !queuedTranscript.target) {
+      return;
+    }
+
     setTranscript((currentTranscript) => ({
-      ...currentTranscript,
-      [event.kind]: `${currentTranscript[event.kind]}${event.text}`,
+      source: `${currentTranscript.source}${queuedTranscript.source}`,
+      target: `${currentTranscript.target}${queuedTranscript.target}`,
     }));
+  }
+
+  function handleTranscript(event: TranslationTranscriptEvent): void {
+    if (!enableTranscription) {
+      return;
+    }
+
+    pendingTranscript.current = {
+      ...pendingTranscript.current,
+      [event.kind]: `${pendingTranscript.current[event.kind]}${event.text}`,
+    };
+
+    if (transcriptFlushFrame.current === undefined) {
+      transcriptFlushFrame.current =
+        window.requestAnimationFrame(flushTranscript);
+    }
   }
 
   async function start(): Promise<void> {
     setError("");
+    resetTranscriptBuffer();
     setTranscript({ source: "", target: "" });
+
+    activeSession.current?.stop();
+    activeSession.current = undefined;
 
     try {
       activeSession.current = await startTranslationSession({
@@ -181,6 +221,10 @@ export function TranslationSession({
         callbacks: {
           onStatusChange: setStatus,
           onTranscript: handleTranscript,
+          onError: setError,
+          onClosed: () => {
+            activeSession.current = undefined;
+          },
         },
       });
     } catch (caughtError) {
@@ -202,6 +246,7 @@ export function TranslationSession({
 
   useEffect(() => {
     return () => {
+      resetTranscriptBuffer();
       // Ensure we close the connection if the component unmounts
       stop();
     };
@@ -317,7 +362,13 @@ export function TranslationSession({
         </article>
         <article>
           <h2>Traducao</h2>
-          <p>{transcript.target || "Aguardando..."}</p>
+          {enableTranscription ? (
+            <p>{transcript.target || "Aguardando..."}</p>
+          ) : (
+            <p style={{ fontStyle: "italic", opacity: 0.7 }}>
+              Legendas desabilitadas. Audio traduzido continua ativo.
+            </p>
+          )}
         </article>
       </section>
     </div>

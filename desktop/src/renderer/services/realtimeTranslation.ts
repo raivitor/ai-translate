@@ -14,6 +14,8 @@ export type TranslationTranscriptEvent = {
 export type TranslationSessionCallbacks = {
   onStatusChange: (status: TranslationStatus) => void;
   onTranscript: (event: TranslationTranscriptEvent) => void;
+  onError?: (message: string) => void;
+  onClosed?: () => void;
 };
 
 export type StartTranslationSessionOptions = {
@@ -36,11 +38,46 @@ type RealtimeServerEvent = {
   type?: unknown;
   delta?: unknown;
   transcript?: unknown;
+  error?: unknown;
 };
 
 type AudioElementWithSink = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>;
 };
+
+type LatencyLogger = {
+  mark: (label: string) => void;
+  markOnce: (label: string) => void;
+};
+
+const latencyDebugEnabled = import.meta.env.VITE_LATENCY_DEBUG === "true";
+
+function createLatencyLogger(): LatencyLogger {
+  const startedAt = performance.now();
+  const seenLabels = new Set<string>();
+
+  function mark(label: string): void {
+    if (!latencyDebugEnabled) {
+      return;
+    }
+
+    console.info(
+      `[ai-translate latency] ${label}: ${Math.round(performance.now() - startedAt)}ms`,
+    );
+  }
+
+  return {
+    mark,
+    markOnce: (label: string) => {
+      if (seenLabels.has(label)) {
+        return;
+      }
+
+      seenLabels.add(label);
+      mark(label);
+    },
+  };
+}
 
 export type ActiveTranslationSession = {
   stop: () => void;
@@ -94,15 +131,107 @@ function parseRealtimeEvent(rawData: string): RealtimeServerEvent | undefined {
   }
 }
 
+function shouldParseRealtimeEvent(
+  rawData: string,
+  enableTranscription: boolean,
+): boolean {
+  return (
+    enableTranscription ||
+    rawData.includes('"error"') ||
+    rawData.includes('"type":"error"') ||
+    rawData.includes('"type": "error"')
+  );
+}
+
+function readStringProperty(
+  value: Record<string, unknown>,
+  property: string,
+): string | undefined {
+  const rawProperty = value[property];
+
+  return typeof rawProperty === "string" ? rawProperty : undefined;
+}
+
+function getRealtimeErrorMessage(
+  realtimeEvent: RealtimeServerEvent,
+): string | undefined {
+  if (realtimeEvent.type !== "error") {
+    return undefined;
+  }
+
+  if (typeof realtimeEvent.error === "string") {
+    return realtimeEvent.error;
+  }
+
+  if (
+    typeof realtimeEvent.error === "object" &&
+    realtimeEvent.error !== null &&
+    !Array.isArray(realtimeEvent.error)
+  ) {
+    const errorRecord = realtimeEvent.error as Record<string, unknown>;
+    const message = readStringProperty(errorRecord, "message");
+    const code = readStringProperty(errorRecord, "code");
+
+    return message ?? code ?? "OpenAI Realtime returned an error event.";
+  }
+
+  return "OpenAI Realtime returned an error event.";
+}
+
+function isSourceTranscriptDelta(type: unknown): boolean {
+  return (
+    type === "session.input_transcript.delta" ||
+    type === "conversation.item.input_audio_transcription.delta"
+  );
+}
+
+function isTargetTranscriptDelta(type: unknown): boolean {
+  return (
+    type === "session.output_transcript.delta" ||
+    type === "response.audio_transcript.delta" ||
+    type === "response.output_audio_transcript.delta"
+  );
+}
+
+function isSourceTranscriptCompleted(type: unknown): boolean {
+  return (
+    type === "session.input_transcript.completed" ||
+    type === "conversation.item.input_audio_transcription.completed"
+  );
+}
+
+function isTargetTranscriptCompleted(type: unknown): boolean {
+  return (
+    type === "session.output_transcript.completed" ||
+    type === "response.audio_transcript.done" ||
+    type === "response.output_audio_transcript.done"
+  );
+}
+
 function addDataChannelListeners(
   dataChannel: RTCDataChannel,
   callbacks: TranslationSessionCallbacks,
+  enableTranscription: boolean,
+  latencyLogger: LatencyLogger,
+  closeWithError: (message: string) => void,
 ): void {
   let sourceTranscriptHasDelta = false;
   let targetTranscriptHasDelta = false;
 
+  dataChannel.addEventListener("open", () => {
+    latencyLogger.mark("data channel open");
+  });
+
+  dataChannel.addEventListener("error", () => {
+    closeWithError("Realtime data channel failed.");
+  });
+
   dataChannel.addEventListener("message", (event) => {
     if (typeof event.data !== "string") {
+      return;
+    }
+
+    if (!shouldParseRealtimeEvent(event.data, enableTranscription)) {
       return;
     }
 
@@ -112,29 +241,37 @@ function addDataChannelListeners(
       return;
     }
 
+    const errorMessage = getRealtimeErrorMessage(realtimeEvent);
+
+    if (errorMessage) {
+      closeWithError(errorMessage);
+      return;
+    }
+
+    if (!enableTranscription) {
+      return;
+    }
+
     if (
-      (realtimeEvent.type === "session.input_transcript.delta" ||
-        realtimeEvent.type ===
-          "conversation.item.input_audio_transcription.delta") &&
+      isSourceTranscriptDelta(realtimeEvent.type) &&
       typeof realtimeEvent.delta === "string"
     ) {
       sourceTranscriptHasDelta = true;
+      latencyLogger.markOnce("first transcript");
       callbacks.onTranscript({ kind: "source", text: realtimeEvent.delta });
     }
 
     if (
-      (realtimeEvent.type === "session.output_transcript.delta" ||
-        realtimeEvent.type === "response.audio_transcript.delta" ||
-        realtimeEvent.type === "response.output_audio_transcript.delta") &&
+      isTargetTranscriptDelta(realtimeEvent.type) &&
       typeof realtimeEvent.delta === "string"
     ) {
       targetTranscriptHasDelta = true;
+      latencyLogger.markOnce("first transcript");
       callbacks.onTranscript({ kind: "target", text: realtimeEvent.delta });
     }
 
     if (
-      realtimeEvent.type ===
-        "conversation.item.input_audio_transcription.completed" &&
+      isSourceTranscriptCompleted(realtimeEvent.type) &&
       typeof realtimeEvent.transcript === "string"
     ) {
       callbacks.onTranscript({
@@ -145,8 +282,7 @@ function addDataChannelListeners(
     }
 
     if (
-      (realtimeEvent.type === "response.audio_transcript.done" ||
-        realtimeEvent.type === "session.output_transcript.completed") &&
+      isTargetTranscriptCompleted(realtimeEvent.type) &&
       typeof realtimeEvent.transcript === "string"
     ) {
       callbacks.onTranscript({
@@ -190,6 +326,8 @@ export async function startTranslationSession({
   disableAudioDSP,
   callbacks,
 }: StartTranslationSessionOptions): Promise<ActiveTranslationSession> {
+  const latencyLogger = createLatencyLogger();
+  latencyLogger.mark("start");
   callbacks.onStatusChange("requesting-media");
 
   const audioConstraints: MediaTrackConstraints = disableAudioDSP
@@ -208,40 +346,105 @@ export async function startTranslationSession({
     audioConstraints.deviceId = { exact: inputDeviceId };
   }
 
-  const inputStream = await navigator.mediaDevices.getUserMedia({
-    audio: audioConstraints,
-    video: false,
-  });
-
-  callbacks.onStatusChange("connecting");
-
+  let inputStream: MediaStream | undefined;
   let peerConnection: RTCPeerConnection | undefined;
   let dataChannel: RTCDataChannel | undefined;
+  let isClosed = false;
   const audioElement: AudioElementWithSink = document.createElement("audio");
+  audioElement.autoplay = true;
+  audioElement.controls = false;
+  audioElement.style.display = "none";
 
-  try {
-    const clientSecret = await createTranslationClientSecret(
-      apiBaseUrl,
-      targetLanguage,
-      enableTranscription,
-    );
-    peerConnection = new RTCPeerConnection();
+  audioElement.addEventListener("playing", () => {
+    latencyLogger.markOnce("first playing");
+  });
 
-    audioElement.autoplay = true;
-    audioElement.controls = false;
-    audioElement.style.display = "none";
+  const inputStreamPromise = navigator.mediaDevices
+    .getUserMedia({
+      audio: audioConstraints,
+      video: false,
+    })
+    .then((stream) => {
+      inputStream = stream;
+      latencyLogger.mark("media captured");
 
-    if (outputDeviceId) {
-      if (!audioElement.setSinkId) {
-        throw new Error(
-          "This runtime does not support selecting an audio output device.",
-        );
-      }
+      return stream;
+    });
 
-      await audioElement.setSinkId(outputDeviceId);
+  const clientSecretPromise = createTranslationClientSecret(
+    apiBaseUrl,
+    targetLanguage,
+    enableTranscription,
+  ).then((clientSecret) => {
+    latencyLogger.mark("client secret received");
+
+    return clientSecret;
+  });
+
+  function closeSession(): void {
+    if (isClosed) {
+      return;
     }
 
+    isClosed = true;
+
+    if (dataChannel) {
+      closeDataChannel(dataChannel);
+    }
+
+    peerConnection?.close();
+    audioElement.srcObject = null;
+    audioElement.remove();
+
+    if (inputStream) {
+      stopStream(inputStream);
+    } else {
+      void inputStreamPromise.then(stopStream).catch(() => undefined);
+    }
+
+    callbacks.onClosed?.();
+  }
+
+  function closeWithError(message: string): void {
+    closeSession();
+    callbacks.onError?.(message);
+    callbacks.onStatusChange("error");
+  }
+
+  try {
+    peerConnection = new RTCPeerConnection();
+    dataChannel = peerConnection.createDataChannel("oai-events");
+    addDataChannelListeners(
+      dataChannel,
+      callbacks,
+      enableTranscription === true,
+      latencyLogger,
+      closeWithError,
+    );
+
+    const outputSinkPromise = outputDeviceId
+      ? (async () => {
+          if (!audioElement.setSinkId) {
+            throw new Error(
+              "This runtime does not support selecting an audio output device.",
+            );
+          }
+
+          await audioElement.setSinkId(outputDeviceId);
+          latencyLogger.mark("audio sink selected");
+        })()
+      : Promise.resolve();
+
     document.body.append(audioElement);
+    callbacks.onStatusChange("connecting");
+
+    const [capturedInputStream, clientSecret] = await Promise.all([
+      inputStreamPromise,
+      clientSecretPromise,
+      outputSinkPromise,
+    ]);
+
+    inputStream = capturedInputStream;
 
     const [inputTrack] = inputStream.getAudioTracks();
 
@@ -251,9 +454,6 @@ export async function startTranslationSession({
 
     peerConnection.addTrack(inputTrack, inputStream);
 
-    dataChannel = peerConnection.createDataChannel("oai-events");
-    addDataChannelListeners(dataChannel, callbacks);
-
     peerConnection.addEventListener("track", (event) => {
       const [remoteStream] = event.streams;
 
@@ -261,13 +461,15 @@ export async function startTranslationSession({
         return;
       }
 
+      latencyLogger.markOnce("first remote track");
       audioElement.srcObject = remoteStream;
       void audioElement.play().catch(() => {
-        callbacks.onStatusChange("error");
+        closeWithError("Could not play translated audio.");
       });
     });
 
     const offer = await peerConnection.createOffer();
+    latencyLogger.mark("SDP offer created");
     await peerConnection.setLocalDescription(offer);
 
     if (!offer.sdp) {
@@ -285,6 +487,7 @@ export async function startTranslationSession({
         },
       },
     );
+    latencyLogger.mark("SDP answer received");
 
     if (!sdpResponse.ok) {
       throw new Error(
@@ -296,29 +499,19 @@ export async function startTranslationSession({
       type: "answer",
       sdp: await sdpResponse.text(),
     });
+    latencyLogger.mark("remote description applied");
 
     callbacks.onStatusChange("connected");
 
     return {
       stop: () => {
         callbacks.onStatusChange("stopping");
-        closeDataChannel(dataChannel as RTCDataChannel);
-        peerConnection?.close();
-        stopStream(inputStream);
-        audioElement.srcObject = null;
-        audioElement.remove();
+        closeSession();
         callbacks.onStatusChange("idle");
       },
     };
   } catch (error) {
-    if (dataChannel) {
-      closeDataChannel(dataChannel);
-    }
-
-    peerConnection?.close();
-    audioElement.srcObject = null;
-    audioElement.remove();
-    stopStream(inputStream);
+    closeSession();
 
     throw error;
   }

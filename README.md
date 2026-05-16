@@ -46,7 +46,13 @@ Comandos uteis:
 ```bash
 ./setup-audio.sh --check
 ./setup-audio.sh --remove
+AI_TRANSLATE_LOOPBACK_LATENCY_MS=10 ./setup-audio.sh
 ```
+
+O `pw-loopback` usa 20 ms de latencia por padrao. Se o audio ficar estavel,
+teste 10 ms para reduzir o atraso dos dispositivos virtuais. Ao reexecutar o
+setup com outro `AI_TRANSLATE_LOOPBACK_LATENCY_MS`, o script recria os
+loopbacks gerenciados para aplicar o novo valor.
 
 O script foi pensado para o stack PipeWire nativo do Linux Mint 22.3/Ubuntu 24.04. O `pipewire-pulse` ainda e necessario porque Electron e Chrome acessam os dispositivos de audio pela camada de compatibilidade PulseAudio sobre PipeWire.
 
@@ -65,4 +71,10 @@ O script foi pensado para o stack PipeWire nativo do Linux Mint 22.3/Ubuntu 24.0
 npm run validate
 npm run build
 npm run format:all
+```
+
+Para medir o startup da traducao no console do renderer:
+
+```bash
+VITE_LATENCY_DEBUG=true npm start
 ```

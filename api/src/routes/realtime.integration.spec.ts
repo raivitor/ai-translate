@@ -79,6 +79,7 @@ integrationDescribe('Route integration: realtime translations', () => {
     assert.strictEqual(response.status, 200)
     assert.strictEqual(body.value, 'ek_test_secret')
     assert.strictEqual(body.expiresAt, 1_756_310_470)
+    assert.strictEqual('session' in body, false)
     assert.strictEqual(openAiUrl, 'https://api.openai.com/v1/realtime/translations/client_secrets')
     assert.strictEqual(authorizationHeader, 'Bearer test-openai-key')
     assert.strictEqual(requestBody?.session?.model, 'gpt-realtime-translate')

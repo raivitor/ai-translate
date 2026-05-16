@@ -10,7 +10,6 @@ type TranslationClientSecretRequest = {
 type OpenAiTranslationClientSecretResponse = {
   value?: unknown
   expires_at?: unknown
-  session?: unknown
 }
 
 type OpenAiTranslationAudioInputConfig = {
@@ -108,7 +107,6 @@ router.post('/realtime/translations/client-secret', async (req, res) => {
   return res.status(200).json({
     value: responseBody.value,
     expiresAt: responseBody.expires_at,
-    session: responseBody.session,
   })
 })
 

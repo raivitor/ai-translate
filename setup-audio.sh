@@ -19,6 +19,8 @@ TO_MEET_MIC_LABEL="AI-Translate-Virtual-Mic-for-Meet"
 FROM_MEET_SINK_LABEL="AI-Translate-From-Meet"
 FROM_MEET_CAPTURE_LABEL="AI-Translate-Meet-Audio-Capture"
 
+LOOPBACK_LATENCY_MS="${AI_TRANSLATE_LOOPBACK_LATENCY_MS:-20}"
+
 usage() {
   cat <<'USAGE'
 Usage: ./setup-audio.sh [--check|--remove]
@@ -32,6 +34,9 @@ Options:
   --check   print whether the expected PipeWire nodes are available
   --remove  stop temporary pw-loopback processes and legacy Ai Translate pactl modules
   --help    print this help
+
+Environment:
+  AI_TRANSLATE_LOOPBACK_LATENCY_MS  desired pw-loopback latency in ms (default: 20)
 USAGE
 }
 
@@ -60,6 +65,13 @@ require_pipewire() {
 
   if ! wpctl status >/dev/null 2>&1; then
     echo "wpctl cannot reach WirePlumber. Start WirePlumber for this user session." >&2
+    exit 1
+  fi
+}
+
+validate_loopback_latency() {
+  if ! [[ "$LOOPBACK_LATENCY_MS" =~ ^[0-9]+$ ]] || (( LOOPBACK_LATENCY_MS <= 0 )); then
+    echo "AI_TRANSLATE_LOOPBACK_LATENCY_MS must be a positive integer in milliseconds." >&2
     exit 1
   fi
 }
@@ -105,6 +117,22 @@ read_state_value() {
   fi
 
   awk -F= -v key="$key" '$1 == key { print $2; exit }' "$STATE_FILE"
+}
+
+managed_loopback_exists() {
+  local existing_pid
+
+  existing_pid="$(find_loopback_pid_for "$TO_MEET_GROUP")"
+  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$TO_MEET_GROUP"; then
+    return 0
+  fi
+
+  existing_pid="$(find_loopback_pid_for "$FROM_MEET_GROUP")"
+  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$FROM_MEET_GROUP"; then
+    return 0
+  fi
+
+  return 1
 }
 
 pid_cmdline() {
@@ -193,6 +221,7 @@ start_loopback_once() {
     -n "$group_name" \
     -g "$group_name" \
     -c 2 \
+    -l "$LOOPBACK_LATENCY_MS" \
     -m '[ FL, FR ]' \
     --capture-props "$capture_props" \
     --playback-props "$playback_props" \
@@ -225,10 +254,34 @@ write_state_file() {
   if ! cat >"$STATE_FILE" <<EOF
 TO_MEET_LOOPBACK_PID=${TO_MEET_LOOPBACK_PID:-}
 FROM_MEET_LOOPBACK_PID=${FROM_MEET_LOOPBACK_PID:-}
+LOOPBACK_LATENCY_MS=$LOOPBACK_LATENCY_MS
 EOF
   then
     echo "Warning: could not write $STATE_FILE; continuing without setup state." >&2
   fi
+}
+
+recreate_loopbacks_if_latency_changed() {
+  local configured_latency
+  configured_latency="$(read_state_value LOOPBACK_LATENCY_MS)"
+
+  if [[ "$configured_latency" == "$LOOPBACK_LATENCY_MS" ]]; then
+    return
+  fi
+
+  if ! managed_loopback_exists; then
+    return
+  fi
+
+  if [[ -n "$configured_latency" ]]; then
+    echo "Loopback latency changed from ${configured_latency}ms to ${LOOPBACK_LATENCY_MS}ms; recreating managed loopbacks."
+  else
+    echo "Loopback latency is unknown; recreating managed loopbacks with ${LOOPBACK_LATENCY_MS}ms."
+  fi
+
+  stop_loopback "$TO_MEET_GROUP" "TO_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
+  stop_loopback "$FROM_MEET_GROUP" "FROM_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
+  rm -f "$STATE_FILE"
 }
 
 stop_loopback() {
@@ -325,6 +378,9 @@ print_node_status() {
 }
 
 print_status() {
+  local configured_latency
+  configured_latency="$(read_state_value LOOPBACK_LATENCY_MS)"
+
   print_audio_stack
   echo
   echo "Expected PipeWire nodes:"
@@ -333,9 +389,23 @@ print_status() {
   print_node_status source "$TO_MEET_MIC" "$TO_MEET_MIC_LABEL"
   print_node_status sink "$FROM_MEET_SINK" "$FROM_MEET_SINK_LABEL"
   print_node_status source "$FROM_MEET_CAPTURE" "$FROM_MEET_CAPTURE_LABEL"
+  echo
+
+  if [[ -n "$configured_latency" ]]; then
+    echo "Loopback latency: ${configured_latency}ms"
+
+    if [[ "$configured_latency" != "$LOOPBACK_LATENCY_MS" ]]; then
+      echo "Requested latency for next setup: ${LOOPBACK_LATENCY_MS}ms"
+    fi
+  else
+    echo "Loopback latency: unknown"
+    echo "Requested latency for next setup: ${LOOPBACK_LATENCY_MS}ms"
+  fi
 }
 
 setup_audio() {
+  recreate_loopbacks_if_latency_changed
+
   start_loopback_once \
     TO_MEET_LOOPBACK_PID \
     "$TO_MEET_GROUP" \
@@ -367,10 +437,12 @@ main() {
   case "$command" in
     setup)
       require_pipewire
+      validate_loopback_latency
       setup_audio
       ;;
     --check)
       require_pipewire
+      validate_loopback_latency
       print_status
       ;;
     --remove)

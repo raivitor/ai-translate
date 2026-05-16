@@ -187,6 +187,7 @@ export function App() {
           initialOutputDeviceId={defaultOutboundOutputId}
           inputLabel="Seu microfone físico"
           outputLabel="Saída para o Meet (AI-Translate-To-Meet)"
+          disableAudioDSP={true}
         />
 
         <TranslationSession
