@@ -41,7 +41,7 @@ type RealtimeServerEvent = {
   error?: unknown;
 };
 
-type AudioElementWithSink = HTMLAudioElement & {
+type AudioContextWithSinkId = AudioContext & {
   setSinkId?: (sinkId: string) => Promise<void>;
 };
 
@@ -349,11 +349,12 @@ export async function startTranslationSession({
   let inputStream: MediaStream | undefined;
   let peerConnection: RTCPeerConnection | undefined;
   let dataChannel: RTCDataChannel | undefined;
+  let audioContext: AudioContextWithSinkId | undefined;
   let isClosed = false;
-  const audioElement: AudioElementWithSink = document.createElement("audio");
-  audioElement.autoplay = true;
+  const audioElement = document.createElement("audio");
   audioElement.controls = false;
   audioElement.style.display = "none";
+  audioElement.volume = 0;
 
   audioElement.addEventListener("playing", () => {
     latencyLogger.markOnce("first playing");
@@ -393,6 +394,9 @@ export async function startTranslationSession({
     }
 
     peerConnection?.close();
+    const ctx = audioContext;
+    audioContext = undefined;
+    void ctx?.close().catch(() => undefined);
     audioElement.srcObject = null;
     audioElement.remove();
 
@@ -422,18 +426,21 @@ export async function startTranslationSession({
       closeWithError,
     );
 
-    const outputSinkPromise = outputDeviceId
-      ? (async () => {
-          if (!audioElement.setSinkId) {
-            throw new Error(
-              "This runtime does not support selecting an audio output device.",
-            );
-          }
+    const outputSinkPromise = (async () => {
+      const ctx: AudioContextWithSinkId = new AudioContext();
+      audioContext = ctx;
 
-          await audioElement.setSinkId(outputDeviceId);
-          latencyLogger.mark("audio sink selected");
-        })()
-      : Promise.resolve();
+      if (outputDeviceId) {
+        if (!ctx.setSinkId) {
+          throw new Error(
+            "This runtime does not support selecting an audio output device.",
+          );
+        }
+
+        await ctx.setSinkId(outputDeviceId);
+        latencyLogger.mark("audio sink selected");
+      }
+    })();
 
     document.body.append(audioElement);
     callbacks.onStatusChange("connecting");
@@ -455,17 +462,23 @@ export async function startTranslationSession({
     peerConnection.addTrack(inputTrack, inputStream);
 
     peerConnection.addEventListener("track", (event) => {
-      const [remoteStream] = event.streams;
-
-      if (!remoteStream) {
-        return;
-      }
+      const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
 
       latencyLogger.markOnce("first remote track");
+
+      // Activate WebRTC audio rendering; element output is silenced via volume=0
+      if (audioElement.srcObject) return;
       audioElement.srcObject = remoteStream;
       void audioElement.play().catch(() => {
         closeWithError("Could not play translated audio.");
       });
+
+      // Route audio to the correct output device via AudioContext
+      if (audioContext) {
+        const source = audioContext.createMediaStreamSource(remoteStream);
+        source.connect(audioContext.destination);
+        void audioContext.resume().catch(() => undefined);
+      }
     });
 
     const offer = await peerConnection.createOffer();
