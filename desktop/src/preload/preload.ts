@@ -1,5 +1,5 @@
-import { contextBridge } from 'electron'
+import { contextBridge } from "electron";
 
-contextBridge.exposeInMainWorld('aiTranslate', {
+contextBridge.exposeInMainWorld("aiTranslate", {
   platform: process.platform,
-})
+});

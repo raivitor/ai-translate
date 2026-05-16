@@ -2,6 +2,6 @@
 
 interface Window {
   aiTranslate?: {
-    platform: NodeJS.Platform
-  }
+    platform: NodeJS.Platform;
+  };
 }
