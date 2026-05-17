@@ -20,6 +20,7 @@ FROM_MEET_SINK_LABEL="AI-Translate-From-Meet"
 FROM_MEET_CAPTURE_LABEL="AI-Translate-Meet-Audio-Capture"
 
 LOOPBACK_LATENCY_MS="${AI_TRANSLATE_LOOPBACK_LATENCY_MS:-10}"
+LOOPBACK_QUANTUM="${AI_TRANSLATE_LOOPBACK_QUANTUM:-256}"
 
 usage() {
   cat <<'USAGE'
@@ -36,7 +37,12 @@ Options:
   --help    print this help
 
 Environment:
-  AI_TRANSLATE_LOOPBACK_LATENCY_MS  desired pw-loopback latency in ms (default: 20)
+  AI_TRANSLATE_LOOPBACK_LATENCY_MS  desired pw-loopback latency in ms (default: 10)
+  AI_TRANSLATE_LOOPBACK_QUANTUM     PipeWire quantum in samples at 48 kHz for the
+                                    loopback nodes; lower = less latency but higher
+                                    CPU usage. Common values: 128 (~2.7 ms), 256
+                                    (~5.3 ms, default), 512 (~10.7 ms). Must be a
+                                    power of two.
 USAGE
 }
 
@@ -72,6 +78,19 @@ require_pipewire() {
 validate_loopback_latency() {
   if ! [[ "$LOOPBACK_LATENCY_MS" =~ ^[0-9]+$ ]] || (( LOOPBACK_LATENCY_MS <= 0 )); then
     echo "AI_TRANSLATE_LOOPBACK_LATENCY_MS must be a positive integer in milliseconds." >&2
+    exit 1
+  fi
+}
+
+validate_loopback_quantum() {
+  if ! [[ "$LOOPBACK_QUANTUM" =~ ^[0-9]+$ ]] || (( LOOPBACK_QUANTUM <= 0 )); then
+    echo "AI_TRANSLATE_LOOPBACK_QUANTUM must be a positive integer (number of samples)." >&2
+    exit 1
+  fi
+
+  # Require power of two
+  if (( (LOOPBACK_QUANTUM & (LOOPBACK_QUANTUM - 1)) != 0 )); then
+    echo "AI_TRANSLATE_LOOPBACK_QUANTUM must be a power of two (e.g. 128, 256, 512)." >&2
     exit 1
   fi
 }
@@ -217,7 +236,7 @@ start_loopback_once() {
   capture_props="{ media.class = \"Audio/Sink\" node.name = \"$capture_node\" node.description = \"$capture_label\" node.virtual = true audio.position = [ FL FR ] }"
   playback_props="{ media.class = \"Audio/Source\" node.name = \"$playback_node\" node.description = \"$playback_label\" node.virtual = true audio.position = [ FL FR ] }"
 
-  nohup pw-loopback \
+  nohup env PIPEWIRE_LATENCY="$LOOPBACK_QUANTUM/48000" pw-loopback \
     -n "$group_name" \
     -g "$group_name" \
     -c 2 \
@@ -438,11 +457,13 @@ main() {
     setup)
       require_pipewire
       validate_loopback_latency
+      validate_loopback_quantum
       setup_audio
       ;;
     --check)
       require_pipewire
       validate_loopback_latency
+      validate_loopback_quantum
       print_status
       ;;
     --remove)
