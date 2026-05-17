@@ -81,7 +81,9 @@ export function TranslationSession({
   const [targetLanguage, setTargetLanguage] = useState<TranslationLanguageCode>(() => {
     const storedLanguage = localStorage.getItem(`ai_translate_${sessionKey}_target_language`)
 
-    return storedLanguage ? resolveTranslationLanguageCode(storedLanguage) ?? initialTargetLanguage : initialTargetLanguage
+    return storedLanguage
+      ? (resolveTranslationLanguageCode(storedLanguage) ?? initialTargetLanguage)
+      : initialTargetLanguage
   })
   const [enableTranscription, setEnableTranscription] = useState(false)
   const [status, setStatus] = useState<TranslationStatus>('idle')
