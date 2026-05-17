@@ -8,5 +8,6 @@ contextBridge.exposeInMainWorld('aiTranslate', {
   createClientSecret: (params: {
     targetLanguage: string
     enableTranscription?: boolean
+    transcriptionLanguage?: string
   }): Promise<{ value: string; expiresAt: number }> => ipcRenderer.invoke('aiTranslate:createClientSecret', params),
 })

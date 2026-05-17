@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import type { TranslationLanguageCode } from '../../shared/translationLanguages.js'
 import { ApiKeySettings } from './ApiKeySettings.js'
 import { TranslationSession } from './TranslationSession.js'
+
+const DEFAULT_OUTBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'en'
+const DEFAULT_INBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'pt'
+const OUTBOUND_TRANSCRIPTION_LANGUAGE: TranslationLanguageCode = 'pt'
+const INBOUND_TRANSCRIPTION_LANGUAGE: TranslationLanguageCode = 'en'
 
 function normalizeDeviceLabel(device: MediaDeviceInfo): string {
   return device.label.toLowerCase().replaceAll(/[\s_]+/g, '-')
@@ -179,12 +185,14 @@ export function App() {
           <div className='sessions-grid'>
             <TranslationSession
               sessionKey='outbound'
-              title='Outbound (Falar pt-br)'
-              targetLanguage='en'
+              title='Outbound (sua fala)'
+              initialTargetLanguage={DEFAULT_OUTBOUND_TARGET_LANGUAGE}
+              transcriptionLanguage={OUTBOUND_TRANSCRIPTION_LANGUAGE}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
               initialInputDeviceId={defaultOutboundInputId}
               initialOutputDeviceId={defaultOutboundOutputId}
+              targetLanguageLabel='Traduzir minha fala para'
               inputLabel='Seu microfone físico'
               outputLabel='Saída para o Meet (AI-Translate-To-Meet)'
               disableAudioDSP={true}
@@ -192,12 +200,14 @@ export function App() {
 
             <TranslationSession
               sessionKey='inbound'
-              title='Inbound (Ouvir pt-br)'
-              targetLanguage='pt'
+              title='Inbound (áudio do Meet)'
+              initialTargetLanguage={DEFAULT_INBOUND_TARGET_LANGUAGE}
+              transcriptionLanguage={INBOUND_TRANSCRIPTION_LANGUAGE}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
               initialInputDeviceId={defaultInboundInputId}
               initialOutputDeviceId={defaultInboundOutputId}
+              targetLanguageLabel='Quero ouvir em'
               inputLabel='Áudio do Meet (AI-Translate-Meet-Audio-Capture)'
               outputLabel='Seus fones de ouvido'
               disableAudioDSP={true}

@@ -16,6 +16,7 @@ export type StartTranslationSessionOptions = {
   inputDeviceId: string
   outputDeviceId: string
   targetLanguage: string
+  transcriptionLanguage?: string | undefined
   enableTranscription?: boolean
   disableAudioDSP?: boolean
   callbacks: TranslationSessionCallbacks
@@ -68,10 +69,15 @@ export type ActiveTranslationSession = {
   stop: () => void
 }
 
-async function createTranslationClientSecret(targetLanguage: string, enableTranscription?: boolean): Promise<string> {
+async function createTranslationClientSecret(
+  targetLanguage: string,
+  enableTranscription?: boolean,
+  transcriptionLanguage?: string,
+): Promise<string> {
   const result = await window.aiTranslate!.createClientSecret({
     targetLanguage,
     enableTranscription,
+    transcriptionLanguage,
   })
 
   return result.value
@@ -247,6 +253,7 @@ export async function startTranslationSession({
   inputDeviceId,
   outputDeviceId,
   targetLanguage,
+  transcriptionLanguage,
   enableTranscription,
   disableAudioDSP,
   callbacks,
@@ -297,7 +304,11 @@ export async function startTranslationSession({
       return stream
     })
 
-  const clientSecretPromise = createTranslationClientSecret(targetLanguage, enableTranscription).then(clientSecret => {
+  const clientSecretPromise = createTranslationClientSecret(
+    targetLanguage,
+    enableTranscription,
+    transcriptionLanguage,
+  ).then(clientSecret => {
     latencyLogger.mark('client secret received')
 
     return clientSecret

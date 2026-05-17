@@ -53,6 +53,7 @@ test('createClientSecret includes transcription config when enabled', async () =
   await createClientSecret({
     targetLanguage: 'pt',
     enableTranscription: true,
+    transcriptionLanguage: 'en',
     apiKey: 'test-key',
   })
 
@@ -61,6 +62,30 @@ test('createClientSecret includes transcription config when enabled', async () =
   const inputConfig = audio.input as Record<string, unknown>
   const transcription = inputConfig.transcription as Record<string, unknown>
   assert.strictEqual(transcription.model, 'gpt-realtime-whisper')
+  assert.strictEqual(transcription.language, 'en')
+})
+
+test('createClientSecret omits transcription language when no hint is provided', async () => {
+  let capturedBody: Record<string, unknown> = {}
+
+  globalThis.fetch = (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+
+    return Promise.resolve(Response.json({ value: 'ek_test_secret', expires_at: 1_756_310_470 }))
+  }
+
+  await createClientSecret({
+    targetLanguage: 'pt',
+    enableTranscription: true,
+    apiKey: 'test-key',
+  })
+
+  const session = capturedBody.session as Record<string, unknown>
+  const audio = session.audio as Record<string, unknown>
+  const inputConfig = audio.input as Record<string, unknown>
+  const transcription = inputConfig.transcription as Record<string, unknown>
+  assert.strictEqual(transcription.model, 'gpt-realtime-whisper')
+  assert.ok(!('language' in transcription))
 })
 
 test('createClientSecret omits transcription when explicitly disabled', async () => {
@@ -122,8 +147,33 @@ test('createClientSecret throws for unsupported language without calling OpenAI'
   assert.strictEqual(fetchWasCalled, false)
 })
 
-test('createClientSecret rejects all unsupported languages', async () => {
-  const unsupported = ['fr', 'de', 'es', 'zh', 'ja', '', 'EN', 'PT']
+test('createClientSecret accepts normalized supported languages', async () => {
+  let capturedBody: Record<string, unknown> = {}
+
+  globalThis.fetch = (_input, init) => {
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+
+    return Promise.resolve(Response.json({ value: 'ek_test_secret', expires_at: 0 }))
+  }
+
+  await createClientSecret({
+    targetLanguage: 'PT-BR',
+    transcriptionLanguage: 'EN',
+    enableTranscription: true,
+    apiKey: 'test-key',
+  })
+
+  const session = capturedBody.session as Record<string, unknown>
+  const audio = session.audio as Record<string, unknown>
+  const output = audio.output as Record<string, unknown>
+  const input = audio.input as Record<string, unknown>
+  const transcription = input.transcription as Record<string, unknown>
+  assert.strictEqual(output.language, 'pt')
+  assert.strictEqual(transcription.language, 'en')
+})
+
+test('createClientSecret rejects all unsupported target languages', async () => {
+  const unsupported = ['fr', 'de', 'es', 'zh', 'ja', '']
 
   for (const lang of unsupported) {
     if (SUPPORTED_TARGET_LANGUAGES.has(lang)) {
@@ -137,6 +187,31 @@ test('createClientSecret rejects all unsupported languages', async () => {
       `Expected rejection for language: ${lang}`,
     )
   }
+})
+
+test('createClientSecret throws for unsupported transcription language without calling OpenAI', async () => {
+  let fetchWasCalled = false
+
+  globalThis.fetch = () => {
+    fetchWasCalled = true
+    return Promise.resolve(Response.json({}))
+  }
+
+  await assert.rejects(
+    () =>
+      createClientSecret({
+        targetLanguage: 'en',
+        transcriptionLanguage: 'fr',
+        enableTranscription: true,
+        apiKey: 'test-key',
+      }),
+    (err: Error) => {
+      assert.match(err.message, /transcriptionLanguage/)
+      return true
+    },
+  )
+
+  assert.strictEqual(fetchWasCalled, false)
 })
 
 test('createClientSecret throws when OpenAI returns a non-OK response', async () => {

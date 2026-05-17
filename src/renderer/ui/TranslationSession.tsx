@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  resolveTranslationLanguageCode,
+  TRANSLATION_LANGUAGES,
+  type TranslationLanguageCode,
+} from '../../shared/translationLanguages.js'
+import {
   type ActiveTranslationSession,
   startTranslationSession,
   type TranslationStatus,
@@ -36,11 +41,13 @@ function getStatusLabel(status: TranslationStatus): string {
 export interface TranslationSessionProps {
   sessionKey: string
   title: string
-  targetLanguage: 'en' | 'pt'
+  initialTargetLanguage: TranslationLanguageCode
+  transcriptionLanguage?: TranslationLanguageCode
   inputDevices: MediaDeviceInfo[]
   outputDevices: MediaDeviceInfo[]
   initialInputDeviceId: string
   initialOutputDeviceId: string
+  targetLanguageLabel: string
   inputLabel: string
   outputLabel: string
   disableAudioDSP?: boolean
@@ -49,11 +56,13 @@ export interface TranslationSessionProps {
 export function TranslationSession({
   sessionKey,
   title,
-  targetLanguage,
+  initialTargetLanguage,
+  transcriptionLanguage,
   inputDevices,
   outputDevices,
   initialInputDeviceId,
   initialOutputDeviceId,
+  targetLanguageLabel,
   inputLabel,
   outputLabel,
   disableAudioDSP,
@@ -68,6 +77,11 @@ export function TranslationSession({
   })
   const [outputDeviceId, setOutputDeviceId] = useState(() => {
     return localStorage.getItem(`ai_translate_${sessionKey}_output`) || initialOutputDeviceId
+  })
+  const [targetLanguage, setTargetLanguage] = useState<TranslationLanguageCode>(() => {
+    const storedLanguage = localStorage.getItem(`ai_translate_${sessionKey}_target_language`)
+
+    return storedLanguage ? resolveTranslationLanguageCode(storedLanguage) ?? initialTargetLanguage : initialTargetLanguage
   })
   const [enableTranscription, setEnableTranscription] = useState(false)
   const [status, setStatus] = useState<TranslationStatus>('idle')
@@ -134,6 +148,14 @@ export function TranslationSession({
     setOutputDeviceId(deviceId)
   }
 
+  function handleTargetLanguageChange(language: string): void {
+    const resolvedLanguage = resolveTranslationLanguageCode(language)
+
+    if (resolvedLanguage) {
+      setTargetLanguage(resolvedLanguage)
+    }
+  }
+
   // Persist selections to localStorage
   useEffect(() => {
     if (inputDeviceId) {
@@ -146,6 +168,10 @@ export function TranslationSession({
       localStorage.setItem(`ai_translate_${sessionKey}_output`, outputDeviceId)
     }
   }, [outputDeviceId, sessionKey])
+
+  useEffect(() => {
+    localStorage.setItem(`ai_translate_${sessionKey}_target_language`, targetLanguage)
+  }, [sessionKey, targetLanguage])
 
   function resetTranscriptBuffer(): void {
     pendingTranscript.current = { source: '', target: '' }
@@ -200,6 +226,7 @@ export function TranslationSession({
         inputDeviceId,
         outputDeviceId,
         targetLanguage,
+        transcriptionLanguage,
         enableTranscription,
         disableAudioDSP: disableAudioDSP ?? false,
         callbacks: {
@@ -255,6 +282,23 @@ export function TranslationSession({
       <section
         className='control-grid'
         aria-label='Controles de traducao'>
+        <div className='control-panel'>
+          <label htmlFor={`target-language-${sessionKey}`}>{targetLanguageLabel}</label>
+          <select
+            id={`target-language-${sessionKey}`}
+            value={targetLanguage}
+            onChange={event => handleTargetLanguageChange(event.target.value)}
+            disabled={isRunning}>
+            {TRANSLATION_LANGUAGES.map(language => (
+              <option
+                key={language.code}
+                value={language.code}>
+                {language.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className='control-panel'>
           <label htmlFor={`input-device-${title}`}>{inputLabel}</label>
           <select

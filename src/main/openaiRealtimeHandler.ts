@@ -1,4 +1,10 @@
-export const SUPPORTED_TARGET_LANGUAGES = new Set(['en', 'pt'])
+import {
+  resolveTranslationLanguageCode,
+  SUPPORTED_TRANSLATION_LANGUAGE_CODES,
+  type TranslationLanguageCode,
+} from '../shared/translationLanguages.js'
+
+export const SUPPORTED_TARGET_LANGUAGES = SUPPORTED_TRANSLATION_LANGUAGE_CODES
 export const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600
 export const OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
 
@@ -7,6 +13,7 @@ const OPENAI_TRANSLATION_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtim
 export type CreateClientSecretParams = {
   targetLanguage: string
   enableTranscription?: boolean | undefined
+  transcriptionLanguage?: string | undefined
   apiKey: string
   model?: string
 }
@@ -19,6 +26,7 @@ export type ClientSecretResult = {
 type OpenAiTranslationAudioInputConfig = {
   transcription?: {
     model: 'gpt-realtime-whisper'
+    language?: TranslationLanguageCode
   }
   noise_reduction: null
 }
@@ -28,21 +36,25 @@ type OpenAiTranslationClientSecretResponse = {
   expires_at?: unknown
 }
 
-function resolveTargetLanguage(rawLanguage: string): string | undefined {
-  const normalized = rawLanguage.trim().toLowerCase()
-  return SUPPORTED_TARGET_LANGUAGES.has(normalized) ? normalized : undefined
-}
-
 export async function createClientSecret({
   targetLanguage,
   enableTranscription,
+  transcriptionLanguage,
   apiKey,
   model = OPENAI_REALTIME_MODEL,
 }: CreateClientSecretParams): Promise<ClientSecretResult> {
-  const resolvedLanguage = resolveTargetLanguage(targetLanguage)
+  const resolvedLanguage = resolveTranslationLanguageCode(targetLanguage)
 
   if (!resolvedLanguage) {
     throw new Error(`targetLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
+  }
+
+  const resolvedTranscriptionLanguage = transcriptionLanguage
+    ? resolveTranslationLanguageCode(transcriptionLanguage)
+    : undefined
+
+  if (transcriptionLanguage && !resolvedTranscriptionLanguage) {
+    throw new Error(`transcriptionLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
   }
 
   const audioInputConfig: OpenAiTranslationAudioInputConfig = {
@@ -50,7 +62,13 @@ export async function createClientSecret({
   }
 
   if (enableTranscription === true) {
-    audioInputConfig.transcription = { model: 'gpt-realtime-whisper' }
+    audioInputConfig.transcription = {
+      model: 'gpt-realtime-whisper',
+    }
+
+    if (resolvedTranscriptionLanguage) {
+      audioInputConfig.transcription.language = resolvedTranscriptionLanguage
+    }
   }
 
   const openAiResponse = await fetch(OPENAI_TRANSLATION_CLIENT_SECRETS_URL, {

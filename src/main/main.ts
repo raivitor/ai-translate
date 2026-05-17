@@ -106,7 +106,10 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(
     'aiTranslate:createClientSecret',
-    async (_event, params: { targetLanguage: string; enableTranscription?: boolean }) => {
+    async (
+      _event,
+      params: { targetLanguage: string; enableTranscription?: boolean; transcriptionLanguage?: string },
+    ) => {
       const apiKey = loadApiKey()
 
       if (!apiKey) {
@@ -116,6 +119,7 @@ app.whenReady().then(async () => {
       return createClientSecret({
         targetLanguage: params.targetLanguage,
         enableTranscription: params.enableTranscription,
+        transcriptionLanguage: params.transcriptionLanguage,
         apiKey,
       })
     },

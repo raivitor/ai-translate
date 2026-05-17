@@ -9,6 +9,7 @@ interface Window {
     createClientSecret: (params: {
       targetLanguage: string
       enableTranscription?: boolean | undefined
+      transcriptionLanguage?: string | undefined
     }) => Promise<{ value: string; expiresAt: number }>
   }
 }
