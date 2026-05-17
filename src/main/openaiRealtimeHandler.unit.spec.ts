@@ -137,7 +137,7 @@ test('createClientSecret throws for unsupported language without calling OpenAI'
   }
 
   await assert.rejects(
-    () => createClientSecret({ targetLanguage: 'fr', apiKey: 'test-key' }),
+    () => createClientSecret({ targetLanguage: 'ar', apiKey: 'test-key' }),
     (err: Error) => {
       assert.match(err.message, /targetLanguage/)
       return true
@@ -172,8 +172,37 @@ test('createClientSecret accepts normalized supported languages', async () => {
   assert.strictEqual(transcription.language, 'en')
 })
 
+test('createClientSecret accepts all realtime translation languages', async () => {
+  const supportedLanguages = ['es', 'pt', 'fr', 'ja', 'ru', 'zh', 'de', 'ko', 'hi', 'id', 'vi', 'it', 'en']
+
+  for (const lang of supportedLanguages) {
+    let capturedBody: Record<string, unknown> = {}
+
+    globalThis.fetch = (_input, init) => {
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+
+      return Promise.resolve(Response.json({ value: 'ek_test_secret', expires_at: 0 }))
+    }
+
+    await createClientSecret({
+      targetLanguage: lang,
+      transcriptionLanguage: lang,
+      enableTranscription: true,
+      apiKey: 'test-key',
+    })
+
+    const session = capturedBody.session as Record<string, unknown>
+    const audio = session.audio as Record<string, unknown>
+    const output = audio.output as Record<string, unknown>
+    const input = audio.input as Record<string, unknown>
+    const transcription = input.transcription as Record<string, unknown>
+    assert.strictEqual(output.language, lang)
+    assert.strictEqual(transcription.language, lang)
+  }
+})
+
 test('createClientSecret rejects all unsupported target languages', async () => {
-  const unsupported = ['fr', 'de', 'es', 'zh', 'ja', '']
+  const unsupported = ['ar', 'nl', 'pl', 'tr', 'sv', '']
 
   for (const lang of unsupported) {
     if (SUPPORTED_TARGET_LANGUAGES.has(lang)) {
@@ -201,7 +230,7 @@ test('createClientSecret throws for unsupported transcription language without c
     () =>
       createClientSecret({
         targetLanguage: 'en',
-        transcriptionLanguage: 'fr',
+        transcriptionLanguage: 'ar',
         enableTranscription: true,
         apiKey: 'test-key',
       }),

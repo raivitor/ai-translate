@@ -1,5 +1,16 @@
 export const TRANSLATION_LANGUAGES = [
-  { code: 'pt', label: 'Português (Brasil)' },
+  { code: 'es', label: 'Espanhol' },
+  { code: 'pt', label: 'Português' },
+  { code: 'fr', label: 'Francês' },
+  { code: 'ja', label: 'Japonês' },
+  { code: 'ru', label: 'Russo' },
+  { code: 'zh', label: 'Chinês' },
+  { code: 'de', label: 'Alemão' },
+  { code: 'ko', label: 'Coreano' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'id', label: 'Indonésio' },
+  { code: 'vi', label: 'Vietnamita' },
+  { code: 'it', label: 'Italiano' },
   { code: 'en', label: 'Inglês' },
 ] as const
 
