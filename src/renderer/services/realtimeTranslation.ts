@@ -37,6 +37,10 @@ type SinkSelectableAudioElement = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>
 }
 
+type RTCRtpReceiverWithJitterBufferTarget = RTCRtpReceiver & {
+  jitterBufferTarget?: number
+}
+
 type LatencyLogger = {
   mark: (label: string) => void
   markOnce: (label: string) => void
@@ -359,22 +363,21 @@ export async function startTranslationSession({
 
     const outputSinkPromise = (async () => {
       if (outputDeviceId) {
-        if (audioElement.setSinkId) {
+        const ctx: AudioContextWithSinkId = new AudioContext({ latencyHint: 'interactive' })
+
+        if (ctx.setSinkId) {
+          await ctx.setSinkId(outputDeviceId)
+          audioContext = ctx
+          audioElement.muted = true
+          latencyLogger.mark('audio context sink selected')
+        } else if (audioElement.setSinkId) {
+          void ctx.close().catch(() => undefined)
           await audioElement.setSinkId(outputDeviceId)
           latencyLogger.mark('audio element sink selected')
-          return
-        }
-
-        const ctx: AudioContextWithSinkId = new AudioContext({ latencyHint: 'interactive' })
-        audioContext = ctx
-
-        if (!ctx.setSinkId) {
+        } else {
+          void ctx.close().catch(() => undefined)
           throw new Error('This runtime does not support selecting an audio output device.')
         }
-
-        await ctx.setSinkId(outputDeviceId)
-        audioElement.muted = true
-        latencyLogger.mark('audio context sink selected')
       }
     })()
 
@@ -405,16 +408,23 @@ export async function startTranslationSession({
         latencyLogger.markOnce('remote track unmuted')
       })
 
+      const receiver = event.receiver as RTCRtpReceiverWithJitterBufferTarget
+      if (receiver.jitterBufferTarget !== undefined) {
+        receiver.jitterBufferTarget = 0
+      }
+
       if (audioElement.srcObject) return
       audioElement.srcObject = remoteStream
-      void audioElement.play().catch(() => {
-        closeWithError('Could not play translated audio.')
-      })
 
       if (audioContext) {
         const source = audioContext.createMediaStreamSource(remoteStream)
         source.connect(audioContext.destination)
         void audioContext.resume().catch(() => undefined)
+        latencyLogger.markOnce('first playing')
+      } else {
+        void audioElement.play().catch(() => {
+          closeWithError('Could not play translated audio.')
+        })
       }
     })
 
