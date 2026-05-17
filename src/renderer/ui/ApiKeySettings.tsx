@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
 export interface ApiKeySettingsProps {
+  api: NonNullable<Window['aiTranslate']>
   hasExistingKey: boolean
   onSaved: () => void
   onCleared: () => void
 }
 
-export function ApiKeySettings({ hasExistingKey, onSaved, onCleared }: ApiKeySettingsProps) {
+export function ApiKeySettings({ api, hasExistingKey, onSaved, onCleared }: ApiKeySettingsProps) {
   const [key, setKey] = useState('')
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
@@ -23,7 +24,7 @@ export function ApiKeySettings({ hasExistingKey, onSaved, onCleared }: ApiKeySet
     setFeedback('')
 
     try {
-      await window.aiTranslate!.setApiKey(trimmed)
+      await api.setApiKey(trimmed)
       setKey('')
       onSaved()
     } catch (err) {
@@ -38,7 +39,7 @@ export function ApiKeySettings({ hasExistingKey, onSaved, onCleared }: ApiKeySet
     setFeedback('')
 
     try {
-      await window.aiTranslate!.clearApiKey()
+      await api.clearApiKey()
       setKey('')
       onCleared()
     } catch (err) {

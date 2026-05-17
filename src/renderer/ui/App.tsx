@@ -60,16 +60,31 @@ function isHeadphones(device: MediaDeviceInfo): boolean {
 }
 
 export function App() {
+  const aiTranslate = window.aiTranslate
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [error, setError] = useState('')
   const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null)
   const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
-    void window.aiTranslate!.hasApiKey().then(configured => {
-      setApiKeyConfigured(configured)
-    })
-  }, [])
+    if (!aiTranslate) {
+      void Promise.resolve().then(() => {
+        setError('A ponte do Electron nao foi carregada. Reinicie o app depois de executar o build.')
+        setApiKeyConfigured(false)
+      })
+      return
+    }
+
+    void aiTranslate
+      .hasApiKey()
+      .then(configured => {
+        setApiKeyConfigured(configured)
+      })
+      .catch(caughtError => {
+        setError(caughtError instanceof Error ? caughtError.message : 'Nao foi possivel verificar a chave da OpenAI.')
+        setApiKeyConfigured(false)
+      })
+  }, [aiTranslate])
 
   const inputDevices = useMemo(() => devices.filter(device => device.kind === 'audioinput'), [devices])
   const outputDevices = useMemo(() => devices.filter(device => device.kind === 'audiooutput'), [devices])
@@ -151,18 +166,27 @@ export function App() {
       </section>
 
       {(apiKeyConfigured === false || showSettings) && (
-        <ApiKeySettings
-          hasExistingKey={apiKeyConfigured === true}
-          onSaved={() => {
-            setApiKeyConfigured(true)
-            setShowSettings(false)
-          }}
-          onCleared={() => {
-            setApiKeyConfigured(false)
-            setShowSettings(false)
-          }}
-        />
+        <>
+          {error && <p className='error-message'>{error}</p>}
+          {aiTranslate && (
+            <ApiKeySettings
+              api={aiTranslate}
+              hasExistingKey={apiKeyConfigured === true}
+              onSaved={() => {
+                setError('')
+                setApiKeyConfigured(true)
+                setShowSettings(false)
+              }}
+              onCleared={() => {
+                setApiKeyConfigured(false)
+                setShowSettings(false)
+              }}
+            />
+          )}
+        </>
       )}
+
+      {apiKeyConfigured === null && <p className='settings-description'>Carregando configuracoes...</p>}
 
       {apiKeyConfigured === true && !showSettings && (
         <>

@@ -13,7 +13,7 @@
     "start": "electron .",
     "dev": "concurrently -k -n vite,electron \"npm run dev:renderer\" \"npm run dev:electron\"",
     "dev:renderer": "vite --host 127.0.0.1",
-    "dev:electron": "npm run build:main && cross-env NODE_ENV=development electron .",
+    "dev:electron": "wait-on tcp:127.0.0.1:5173 && npm run build:main && cross-env NODE_ENV=development electron .",
     "build:main": "tsc -p tsconfig.build.json",
     "build": "npm run build:main && vite build",
     "lint": "cross-env CI=true eslint .",

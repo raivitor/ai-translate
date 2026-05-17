@@ -6,7 +6,7 @@ import { clearApiKey, hasApiKey, loadApiKey, saveApiKey } from './apiKeyStore.js
 import { createClientSecret } from './openaiRealtimeHandler.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const isDevelopment = process.env.NODE_ENV !== 'production'
+const isDevelopment = process.env.NODE_ENV === 'development'
 const rendererDevUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
 
 let mainWindow: BrowserWindow | undefined
@@ -31,7 +31,7 @@ async function createMainWindow(): Promise<void> {
     show: false,
     backgroundColor: '#f8faf7',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/preload.js'),
+      preload: path.join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
