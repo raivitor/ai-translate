@@ -61,8 +61,10 @@ test('createClientSecret includes transcription config when enabled', async () =
   const audio = session.audio as Record<string, unknown>
   const inputConfig = audio.input as Record<string, unknown>
   const transcription = inputConfig.transcription as Record<string, unknown>
+  const noiseReduction = inputConfig.noise_reduction as Record<string, unknown>
   assert.strictEqual(transcription.model, 'gpt-realtime-whisper')
-  assert.strictEqual(transcription.language, 'en')
+  assert.ok(!('language' in transcription))
+  assert.strictEqual(noiseReduction.type, 'near_field')
 })
 
 test('createClientSecret omits transcription language when no hint is provided', async () => {
@@ -84,8 +86,10 @@ test('createClientSecret omits transcription language when no hint is provided',
   const audio = session.audio as Record<string, unknown>
   const inputConfig = audio.input as Record<string, unknown>
   const transcription = inputConfig.transcription as Record<string, unknown>
+  const noiseReduction = inputConfig.noise_reduction as Record<string, unknown>
   assert.strictEqual(transcription.model, 'gpt-realtime-whisper')
   assert.ok(!('language' in transcription))
+  assert.strictEqual(noiseReduction.type, 'near_field')
 })
 
 test('createClientSecret omits transcription when explicitly disabled', async () => {
@@ -169,7 +173,7 @@ test('createClientSecret accepts normalized supported languages', async () => {
   const input = audio.input as Record<string, unknown>
   const transcription = input.transcription as Record<string, unknown>
   assert.strictEqual(output.language, 'pt')
-  assert.strictEqual(transcription.language, 'en')
+  assert.ok(!('language' in transcription))
 })
 
 test('createClientSecret accepts all realtime translation languages', async () => {
@@ -197,7 +201,7 @@ test('createClientSecret accepts all realtime translation languages', async () =
     const input = audio.input as Record<string, unknown>
     const transcription = input.transcription as Record<string, unknown>
     assert.strictEqual(output.language, lang)
-    assert.strictEqual(transcription.language, lang)
+    assert.ok(!('language' in transcription))
   }
 })
 
@@ -218,35 +222,36 @@ test('createClientSecret rejects all unsupported target languages', async () => 
   }
 })
 
-test('createClientSecret throws for unsupported transcription language without calling OpenAI', async () => {
+test('createClientSecret ignores unsupported transcription language', async () => {
   let fetchWasCalled = false
+  let capturedBody: Record<string, unknown> = {}
 
-  globalThis.fetch = () => {
+  globalThis.fetch = (_input, init) => {
     fetchWasCalled = true
-    return Promise.resolve(Response.json({}))
+    capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>
+
+    return Promise.resolve(Response.json({ value: 'ek_test_secret', expires_at: 0 }))
   }
 
-  await assert.rejects(
-    () =>
-      createClientSecret({
-        targetLanguage: 'en',
-        transcriptionLanguage: 'ar',
-        enableTranscription: true,
-        apiKey: 'test-key',
-      }),
-    (err: Error) => {
-      assert.match(err.message, /transcriptionLanguage/)
-      return true
-    },
-  )
+  await createClientSecret({
+    targetLanguage: 'en',
+    transcriptionLanguage: 'ar',
+    enableTranscription: true,
+    apiKey: 'test-key',
+  })
 
-  assert.strictEqual(fetchWasCalled, false)
+  const session = capturedBody.session as Record<string, unknown>
+  const audio = session.audio as Record<string, unknown>
+  const input = audio.input as Record<string, unknown>
+  const transcription = input.transcription as Record<string, unknown>
+  assert.strictEqual(fetchWasCalled, true)
+  assert.ok(!('language' in transcription))
 })
 
 test('createClientSecret throws when OpenAI returns a non-OK response', async () => {
   globalThis.fetch = () => {
     return Promise.resolve(
-      new Response(JSON.stringify({ error: 'invalid_api_key' }), {
+      new Response(JSON.stringify({ error: { message: 'invalid_api_key' } }), {
         status: 401,
       }),
     )
@@ -256,6 +261,7 @@ test('createClientSecret throws when OpenAI returns a non-OK response', async ()
     () => createClientSecret({ targetLanguage: 'en', apiKey: 'bad-key' }),
     (err: Error) => {
       assert.match(err.message, /401/)
+      assert.match(err.message, /invalid_api_key/)
       return true
     },
   )

@@ -7,6 +7,7 @@ import {
 export const SUPPORTED_TARGET_LANGUAGES = SUPPORTED_TRANSLATION_LANGUAGE_CODES
 export const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600
 export const OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
+export const OPENAI_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
 const OPENAI_TRANSLATION_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/translations/client_secrets'
 
@@ -25,10 +26,12 @@ export type ClientSecretResult = {
 
 type OpenAiTranslationAudioInputConfig = {
   transcription?: {
-    model: 'gpt-realtime-whisper'
+    model: typeof OPENAI_REALTIME_TRANSCRIPTION_MODEL
     language?: TranslationLanguageCode
   }
-  noise_reduction: null
+  noise_reduction: null | {
+    type: 'near_field'
+  }
 }
 
 type OpenAiTranslationClientSecretResponse = {
@@ -36,10 +39,24 @@ type OpenAiTranslationClientSecretResponse = {
   expires_at?: unknown
 }
 
+function getOpenAiErrorMessage(responseBody: Record<string, unknown>): string | undefined {
+  const error = responseBody.error
+
+  if (typeof error === 'string') {
+    return error
+  }
+
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message
+    return typeof message === 'string' ? message : undefined
+  }
+
+  return undefined
+}
+
 export async function createClientSecret({
   targetLanguage,
   enableTranscription,
-  transcriptionLanguage,
   apiKey,
   model = OPENAI_REALTIME_MODEL,
 }: CreateClientSecretParams): Promise<ClientSecretResult> {
@@ -49,25 +66,17 @@ export async function createClientSecret({
     throw new Error(`targetLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
   }
 
-  const resolvedTranscriptionLanguage = transcriptionLanguage
-    ? resolveTranslationLanguageCode(transcriptionLanguage)
-    : undefined
-
-  if (transcriptionLanguage && !resolvedTranscriptionLanguage) {
-    throw new Error(`transcriptionLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
-  }
-
   const audioInputConfig: OpenAiTranslationAudioInputConfig = {
     noise_reduction: null,
   }
 
   if (enableTranscription === true) {
-    audioInputConfig.transcription = {
-      model: 'gpt-realtime-whisper',
+    audioInputConfig.noise_reduction = {
+      type: 'near_field',
     }
 
-    if (resolvedTranscriptionLanguage) {
-      audioInputConfig.transcription.language = resolvedTranscriptionLanguage
+    audioInputConfig.transcription = {
+      model: OPENAI_REALTIME_TRANSCRIPTION_MODEL,
     }
   }
 
@@ -100,7 +109,9 @@ export async function createClientSecret({
     | Record<string, unknown>
 
   if (!openAiResponse.ok) {
-    throw new Error(`OpenAI rejected the client secret request (HTTP ${openAiResponse.status}).`)
+    const openAiErrorMessage = getOpenAiErrorMessage(responseBody)
+    const details = openAiErrorMessage ? `: ${openAiErrorMessage}` : ''
+    throw new Error(`OpenAI rejected the client secret request (HTTP ${openAiResponse.status})${details}.`)
   }
 
   if (typeof responseBody.value !== 'string') {
