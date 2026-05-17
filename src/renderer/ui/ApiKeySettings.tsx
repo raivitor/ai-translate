@@ -1,119 +1,108 @@
-import { useState } from "react";
+import { useState } from 'react'
 
 export interface ApiKeySettingsProps {
-  hasExistingKey: boolean;
-  onSaved: () => void;
-  onCleared: () => void;
+  hasExistingKey: boolean
+  onSaved: () => void
+  onCleared: () => void
 }
 
-export function ApiKeySettings({
-  hasExistingKey,
-  onSaved,
-  onCleared,
-}: ApiKeySettingsProps) {
-  const [key, setKey] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [busy, setBusy] = useState(false);
+export function ApiKeySettings({ hasExistingKey, onSaved, onCleared }: ApiKeySettingsProps) {
+  const [key, setKey] = useState('')
+  const [feedback, setFeedback] = useState('')
+  const [busy, setBusy] = useState(false)
 
   async function handleSave(): Promise<void> {
-    const trimmed = key.trim();
+    const trimmed = key.trim()
 
     if (!trimmed) {
-      setFeedback("Informe a chave antes de salvar.");
-      return;
+      setFeedback('Informe a chave antes de salvar.')
+      return
     }
 
-    setBusy(true);
-    setFeedback("");
+    setBusy(true)
+    setFeedback('')
 
     try {
-      await window.aiTranslate!.setApiKey(trimmed);
-      setKey("");
-      onSaved();
+      await window.aiTranslate!.setApiKey(trimmed)
+      setKey('')
+      onSaved()
     } catch (err) {
-      setFeedback(
-        err instanceof Error ? err.message : "Erro ao salvar a chave.",
-      );
+      setFeedback(err instanceof Error ? err.message : 'Erro ao salvar a chave.')
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
   async function handleClear(): Promise<void> {
-    setBusy(true);
-    setFeedback("");
+    setBusy(true)
+    setFeedback('')
 
     try {
-      await window.aiTranslate!.clearApiKey();
-      setKey("");
-      onCleared();
+      await window.aiTranslate!.clearApiKey()
+      setKey('')
+      onCleared()
     } catch (err) {
-      setFeedback(
-        err instanceof Error ? err.message : "Erro ao remover a chave.",
-      );
+      setFeedback(err instanceof Error ? err.message : 'Erro ao remover a chave.')
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
   return (
-    <section className="api-key-settings" aria-labelledby="settings-title">
-      <h2 id="settings-title">Configurar OpenAI API Key</h2>
-      <p className="settings-description">
-        A chave é armazenada localmente de forma cifrada e nunca sai do processo
-        principal do app.
+    <section
+      className='api-key-settings'
+      aria-labelledby='settings-title'>
+      <h2 id='settings-title'>Configurar OpenAI API Key</h2>
+      <p className='settings-description'>
+        A chave é armazenada localmente de forma cifrada e nunca sai do processo principal do app.
       </p>
 
-      <div className="settings-form">
-        <label htmlFor="api-key-input">
-          {hasExistingKey ? "Nova chave (substitui a atual)" : "OPENAI_API_KEY"}
-        </label>
+      <div className='settings-form'>
+        <label htmlFor='api-key-input'>{hasExistingKey ? 'Nova chave (substitui a atual)' : 'OPENAI_API_KEY'}</label>
         <input
-          id="api-key-input"
-          type="password"
-          autoComplete="off"
+          id='api-key-input'
+          type='password'
+          autoComplete='off'
           spellCheck={false}
-          placeholder="sk-..."
+          placeholder='sk-...'
           value={key}
           disabled={busy}
-          onChange={(e) => {
-            setKey(e.target.value);
+          onChange={e => {
+            setKey(e.target.value)
           }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              void handleSave();
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              void handleSave()
             }
           }}
         />
 
-        <div className="settings-actions">
+        <div className='settings-actions'>
           <button
-            type="button"
-            className="primary-button"
+            type='button'
+            className='primary-button'
             disabled={busy}
             onClick={() => {
-              void handleSave();
-            }}
-          >
+              void handleSave()
+            }}>
             Salvar
           </button>
 
           {hasExistingKey && (
             <button
-              type="button"
-              className="secondary-button"
+              type='button'
+              className='secondary-button'
               disabled={busy}
               onClick={() => {
-                void handleClear();
-              }}
-            >
+                void handleClear()
+              }}>
               Limpar chave
             </button>
           )}
         </div>
 
-        {feedback && <p className="error-message">{feedback}</p>}
+        {feedback && <p className='error-message'>{feedback}</p>}
       </div>
     </section>
-  );
+  )
 }

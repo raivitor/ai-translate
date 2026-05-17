@@ -1,37 +1,36 @@
-export const SUPPORTED_TARGET_LANGUAGES = new Set(["en", "pt"]);
-export const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600;
-export const OPENAI_REALTIME_MODEL = "gpt-realtime-translate";
+export const SUPPORTED_TARGET_LANGUAGES = new Set(['en', 'pt'])
+export const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600
+export const OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
 
-const OPENAI_TRANSLATION_CLIENT_SECRETS_URL =
-  "https://api.openai.com/v1/realtime/translations/client_secrets";
+const OPENAI_TRANSLATION_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/translations/client_secrets'
 
 export type CreateClientSecretParams = {
-  targetLanguage: string;
-  enableTranscription?: boolean | undefined;
-  apiKey: string;
-  model?: string;
-};
+  targetLanguage: string
+  enableTranscription?: boolean | undefined
+  apiKey: string
+  model?: string
+}
 
 export type ClientSecretResult = {
-  value: string;
-  expiresAt: number;
-};
+  value: string
+  expiresAt: number
+}
 
 type OpenAiTranslationAudioInputConfig = {
   transcription?: {
-    model: "gpt-realtime-whisper";
-  };
-  noise_reduction: null;
-};
+    model: 'gpt-realtime-whisper'
+  }
+  noise_reduction: null
+}
 
 type OpenAiTranslationClientSecretResponse = {
-  value?: unknown;
-  expires_at?: unknown;
-};
+  value?: unknown
+  expires_at?: unknown
+}
 
 function resolveTargetLanguage(rawLanguage: string): string | undefined {
-  const normalized = rawLanguage.trim().toLowerCase();
-  return SUPPORTED_TARGET_LANGUAGES.has(normalized) ? normalized : undefined;
+  const normalized = rawLanguage.trim().toLowerCase()
+  return SUPPORTED_TARGET_LANGUAGES.has(normalized) ? normalized : undefined
 }
 
 export async function createClientSecret({
@@ -40,32 +39,30 @@ export async function createClientSecret({
   apiKey,
   model = OPENAI_REALTIME_MODEL,
 }: CreateClientSecretParams): Promise<ClientSecretResult> {
-  const resolvedLanguage = resolveTargetLanguage(targetLanguage);
+  const resolvedLanguage = resolveTargetLanguage(targetLanguage)
 
   if (!resolvedLanguage) {
-    throw new Error(
-      `targetLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(", ")}.`,
-    );
+    throw new Error(`targetLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
   }
 
   const audioInputConfig: OpenAiTranslationAudioInputConfig = {
     noise_reduction: null,
-  };
+  }
 
   if (enableTranscription === true) {
-    audioInputConfig.transcription = { model: "gpt-realtime-whisper" };
+    audioInputConfig.transcription = { model: 'gpt-realtime-whisper' }
   }
 
   const openAiResponse = await fetch(OPENAI_TRANSLATION_CLIENT_SECRETS_URL, {
-    method: "POST",
+    method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "OpenAI-Safety-Identifier": "local-desktop-user",
+      'Content-Type': 'application/json',
+      'OpenAI-Safety-Identifier': 'local-desktop-user',
     },
     body: JSON.stringify({
       expires_after: {
-        anchor: "created_at",
+        anchor: 'created_at',
         seconds: DEFAULT_CLIENT_SECRET_TTL_SECONDS,
       },
       session: {
@@ -78,24 +75,21 @@ export async function createClientSecret({
         },
       },
     }),
-  });
+  })
 
   const responseBody = (await openAiResponse.json().catch(() => ({}))) as
     | OpenAiTranslationClientSecretResponse
-    | Record<string, unknown>;
+    | Record<string, unknown>
 
   if (!openAiResponse.ok) {
-    throw new Error(
-      `OpenAI rejected the client secret request (HTTP ${openAiResponse.status}).`,
-    );
+    throw new Error(`OpenAI rejected the client secret request (HTTP ${openAiResponse.status}).`)
   }
 
-  if (typeof responseBody.value !== "string") {
-    throw new Error("OpenAI response did not include a client secret value.");
+  if (typeof responseBody.value !== 'string') {
+    throw new Error('OpenAI response did not include a client secret value.')
   }
 
-  const expiresAt =
-    typeof responseBody.expires_at === "number" ? responseBody.expires_at : 0;
+  const expiresAt = typeof responseBody.expires_at === 'number' ? responseBody.expires_at : 0
 
-  return { value: responseBody.value, expiresAt };
+  return { value: responseBody.value, expiresAt }
 }
