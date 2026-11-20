@@ -14,4 +14,13 @@ contextBridge.exposeInMainWorld('aiTranslate', {
   }): Promise<{ value: string; expiresAt: number }> => ipcRenderer.invoke('aiTranslate:createClientSecret', params),
   getAudioBridgeStatus: (): Promise<AudioBridgeStatus> => ipcRenderer.invoke('aiTranslate:getAudioBridgeStatus'),
   restartAudioBridge: (): Promise<AudioBridgeStatus> => ipcRenderer.invoke('aiTranslate:restartAudioBridge'),
+  onToggleOutboundMute: (callback: () => void): (() => void) => {
+    const listener = (): void => {
+      callback()
+    }
+    ipcRenderer.on('aiTranslate:toggleOutboundMute', listener)
+    return () => {
+      ipcRenderer.removeListener('aiTranslate:toggleOutboundMute', listener)
+    }
+  },
 })

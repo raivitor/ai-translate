@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import type { AudioBridgeStatus } from '../../shared/audioBridgeTypes.js'
 import { selectDefaultAudioDevices } from '../../shared/deviceSelection.js'
 import type { TranslationLanguageCode } from '../../shared/translationLanguages.js'
 import { ApiKeySettings } from './ApiKeySettings.js'
-import { TranslationSession } from './TranslationSession.js'
+import { type SessionCommand, TranslationSession } from './TranslationSession.js'
 
 const DEFAULT_OUTBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'en'
 const DEFAULT_INBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'pt'
@@ -47,6 +47,9 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [audioBridgeStatus, setAudioBridgeStatus] = useState<AudioBridgeStatus | null>(null)
   const [restartingBridge, setRestartingBridge] = useState(false)
+  const [outboundRunning, setOutboundRunning] = useState(false)
+  const [inboundRunning, setInboundRunning] = useState(false)
+  const [meetingCommand, setMeetingCommand] = useState<SessionCommand | undefined>(undefined)
 
   useEffect(() => {
     if (!aiTranslate) {
@@ -122,6 +125,20 @@ export function App() {
     () => selectDefaultAudioDevices(inputDevices, outputDevices),
     [inputDevices, outputDevices],
   )
+
+  const handleOutboundRunningChange = useCallback((running: boolean) => {
+    setOutboundRunning(running)
+  }, [])
+
+  const handleInboundRunningChange = useCallback((running: boolean) => {
+    setInboundRunning(running)
+  }, [])
+
+  const anySessionRunning = outboundRunning || inboundRunning
+
+  function triggerMeetingAction(action: 'start' | 'stop'): void {
+    setMeetingCommand(previous => ({ action, seq: (previous?.seq ?? 0) + 1 }))
+  }
 
   async function requestDeviceAccess(): Promise<void> {
     try {
@@ -208,33 +225,39 @@ export function App() {
 
       {apiKeyConfigured === true && !showSettings && (
         <>
-          {(hasMissingDeviceLabels || (audioBridgeStatus?.supported && !audioBridgeStatus.ready)) && (
-            <section
-              className='actions global-actions'
-              aria-label='Ações globais'>
-              {hasMissingDeviceLabels && (
-                <button
-                  type='button'
-                  className='secondary-button'
-                  onClick={() => {
-                    void requestDeviceAccess()
-                  }}>
-                  Liberar acesso aos dispositivos
-                </button>
-              )}
-              {audioBridgeStatus?.supported && !audioBridgeStatus.ready && (
-                <button
-                  type='button'
-                  className='secondary-button'
-                  disabled={restartingBridge}
-                  onClick={() => {
-                    void handleRestartAudioBridge()
-                  }}>
-                  {restartingBridge ? 'Recriando áudio virtual...' : 'Recriar áudio virtual'}
-                </button>
-              )}
-            </section>
-          )}
+          <section
+            className='actions global-actions'
+            aria-label='Ações globais'>
+            <button
+              type='button'
+              className={anySessionRunning ? 'danger-button' : 'primary-button'}
+              onClick={() => {
+                triggerMeetingAction(anySessionRunning ? 'stop' : 'start')
+              }}>
+              {anySessionRunning ? 'Parar reunião' : 'Iniciar reunião'}
+            </button>
+            {hasMissingDeviceLabels && (
+              <button
+                type='button'
+                className='secondary-button'
+                onClick={() => {
+                  void requestDeviceAccess()
+                }}>
+                Liberar acesso aos dispositivos
+              </button>
+            )}
+            {audioBridgeStatus?.supported && !audioBridgeStatus.ready && (
+              <button
+                type='button'
+                className='secondary-button'
+                disabled={restartingBridge}
+                onClick={() => {
+                  void handleRestartAudioBridge()
+                }}>
+                {restartingBridge ? 'Recriando áudio virtual...' : 'Recriar áudio virtual'}
+              </button>
+            )}
+          </section>
 
           {error && <p className='error-message'>{error}</p>}
 
@@ -252,6 +275,9 @@ export function App() {
               targetLanguageLabel='Traduzir minha fala para'
               inputLabel='Seu microfone físico (HyperX Cloud III)'
               outputLabel='Saída para o Meet (AI-Translate-To-Meet)'
+              enableMute={true}
+              command={meetingCommand}
+              onRunningChange={handleOutboundRunningChange}
             />
 
             <TranslationSession
@@ -267,6 +293,9 @@ export function App() {
               targetLanguageLabel='Quero ouvir em'
               inputLabel='Áudio do Meet (AI-Translate-Meet-Audio-Capture)'
               outputLabel='Seus fones de ouvido (HyperX Cloud III)'
+              enableVolumeControl={true}
+              command={meetingCommand}
+              onRunningChange={handleInboundRunningChange}
             />
           </div>
         </>

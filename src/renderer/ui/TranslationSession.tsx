@@ -13,9 +13,16 @@ import {
 } from '../../shared/translationLanguages.js'
 import {
   type ActiveTranslationSession,
+  type AudioLevels,
+  type ConnectionStats,
   startTranslationSession,
   type TranslationStatus,
 } from '../services/realtimeTranslation.js'
+
+export type SessionCommand = {
+  action: 'start' | 'stop'
+  seq: number
+}
 
 function formatDeviceLabel(device: MediaDeviceInfo, fallback: string): string {
   return device.label || fallback
@@ -29,6 +36,8 @@ function getStatusLabel(status: TranslationStatus): string {
       return 'Conectando Realtime'
     case 'connected':
       return 'Tradução ativa'
+    case 'reconnecting':
+      return 'Reconectando...'
     case 'stopping':
       return 'Encerrando'
     case 'error':
@@ -37,6 +46,16 @@ function getStatusLabel(status: TranslationStatus): string {
     default:
       return 'Pronto'
   }
+}
+
+function readStoredVolume(key: string): number {
+  const raw = localStorage.getItem(key)
+  if (!raw) {
+    return 1
+  }
+
+  const parsed = Number.parseFloat(raw)
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 1.5 ? parsed : 1
 }
 
 export interface TranslationSessionProps {
@@ -52,6 +71,10 @@ export interface TranslationSessionProps {
   targetLanguageLabel: string
   inputLabel: string
   outputLabel: string
+  enableMute?: boolean
+  enableVolumeControl?: boolean
+  command?: SessionCommand | undefined
+  onRunningChange?: (running: boolean) => void
 }
 
 export function TranslationSession({
@@ -67,9 +90,15 @@ export function TranslationSession({
   targetLanguageLabel,
   inputLabel,
   outputLabel,
+  enableMute = false,
+  enableVolumeControl = false,
+  command,
+  onRunningChange,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined)
   const startAbortController = useRef<AbortController | undefined>(undefined)
+  const lastHandledCommandSeq = useRef(command?.seq ?? 0)
+  const latestMutedRef = useRef(false)
 
   const [selectedInput, setSelectedInput] = useState(() => ({
     id: localStorage.getItem(`ai_translate_${sessionKey}_input`) ?? '',
@@ -91,8 +120,12 @@ export function TranslationSession({
     const stored = localStorage.getItem(`ai_translate_${sessionKey}_browser_dsp`)
     return stored === 'true' ? true : stored === 'false' ? false : initialBrowserDsp
   })
+  const [muted, setMuted] = useState(false)
+  const [outputVolume, setOutputVolume] = useState(() => readStoredVolume(`ai_translate_${sessionKey}_volume`))
   const [status, setStatus] = useState<TranslationStatus>('idle')
   const [switchingDevice, setSwitchingDevice] = useState(false)
+  const [levels, setLevels] = useState<AudioLevels>({ input: 0, output: 0 })
+  const [stats, setStats] = useState<ConnectionStats | null>(null)
   const [error, setError] = useState('')
 
   const inputDeviceId = resolveSavedDeviceId(inputDevices, selectedInput.id, selectedInput.label, initialInputDeviceId)
@@ -102,6 +135,15 @@ export function TranslationSession({
     selectedOutput.label,
     initialOutputDeviceId,
   )
+
+  const isRunning =
+    status === 'requesting-media' || status === 'connecting' || status === 'connected' || status === 'reconnecting'
+  const isBusyTransition = status === 'requesting-media' || status === 'connecting' || status === 'stopping'
+  const canStart = status === 'idle' || status === 'error'
+  const canChangeDevice = !isBusyTransition && !switchingDevice
+
+  const latestStartRef = useRef<() => Promise<void>>(async () => undefined)
+  const latestStopRef = useRef<() => void>(() => undefined)
 
   async function switchDevice(kind: 'input' | 'output', deviceId: string): Promise<void> {
     const devices = kind === 'input' ? inputDevices : outputDevices
@@ -117,7 +159,7 @@ export function TranslationSession({
       localStorage.setItem(`ai_translate_${sessionKey}_${kind}_label`, deviceLabel)
     }
 
-    if (!activeSession.current || status !== 'connected') {
+    if (!activeSession.current || (status !== 'connected' && status !== 'reconnecting')) {
       saveSelection()
       return
     }
@@ -164,16 +206,35 @@ export function TranslationSession({
     localStorage.setItem(`ai_translate_${sessionKey}_browser_dsp`, String(enabled))
   }
 
+  function toggleMute(): void {
+    setMuted(previous => !previous)
+  }
+
+  function handleOutputVolumeChange(rawValue: string): void {
+    const parsed = Number.parseFloat(rawValue)
+    if (!Number.isFinite(parsed)) {
+      return
+    }
+
+    const clamped = Math.min(1.5, Math.max(0, parsed))
+    setOutputVolume(clamped)
+    localStorage.setItem(`ai_translate_${sessionKey}_volume`, String(clamped))
+    activeSession.current?.setOutputVolume(clamped)
+  }
+
   function stop(): void {
     startAbortController.current?.abort()
     startAbortController.current = undefined
     activeSession.current?.stop()
     activeSession.current = undefined
+    setLevels({ input: 0, output: 0 })
+    setStats(null)
     setStatus('idle')
   }
 
   async function start(): Promise<void> {
     setError('')
+    setStats(null)
     startAbortController.current?.abort()
     activeSession.current?.stop()
     activeSession.current = undefined
@@ -188,6 +249,8 @@ export function TranslationSession({
         targetLanguage,
         noiseReduction,
         disableAudioDSP: !browserDspEnabled,
+        initialMuted: enableMute ? muted : false,
+        initialOutputVolume: enableVolumeControl ? outputVolume : 1,
         signal: controller.signal,
         callbacks: {
           onStatusChange: nextStatus => {
@@ -200,8 +263,20 @@ export function TranslationSession({
               setError(message)
             }
           },
+          onStats: nextStats => {
+            if (!controller.signal.aborted) {
+              setStats(nextStats)
+            }
+          },
+          onLevels: nextLevels => {
+            if (!controller.signal.aborted) {
+              setLevels(nextLevels)
+            }
+          },
           onClosed: () => {
             activeSession.current = undefined
+            setLevels({ input: 0, output: 0 })
+            setStats(null)
           },
         },
       })
@@ -212,6 +287,9 @@ export function TranslationSession({
       }
 
       activeSession.current = session
+      if (enableMute) {
+        session.setMuted(latestMutedRef.current)
+      }
     } catch (caughtError) {
       if (controller.signal.aborted) {
         return
@@ -227,25 +305,68 @@ export function TranslationSession({
   }
 
   useEffect(() => {
+    latestStartRef.current = start
+    latestStopRef.current = stop
+  })
+
+  useEffect(() => {
+    onRunningChange?.(isRunning)
+  }, [isRunning, onRunningChange])
+
+  useEffect(() => {
+    if (!command || command.seq === lastHandledCommandSeq.current) {
+      return
+    }
+
+    lastHandledCommandSeq.current = command.seq
+
+    if (command.action === 'start' && canStart) {
+      void latestStartRef.current()
+    } else if (command.action === 'stop' && isRunning) {
+      latestStopRef.current()
+    }
+  }, [canStart, command, isRunning])
+
+  useEffect(() => {
+    latestMutedRef.current = muted
+    if (enableMute) {
+      activeSession.current?.setMuted(muted)
+    }
+  }, [enableMute, muted])
+
+  useEffect(() => {
+    if (!enableMute || !window.aiTranslate?.onToggleOutboundMute) {
+      return
+    }
+
+    return window.aiTranslate.onToggleOutboundMute(() => {
+      setMuted(previous => !previous)
+    })
+  }, [enableMute])
+
+  useEffect(() => {
     return () => {
       startAbortController.current?.abort()
       activeSession.current?.stop()
     }
   }, [])
 
-  const isRunning = status === 'requesting-media' || status === 'connecting' || status === 'connected'
-  const isBusyTransition = status === 'requesting-media' || status === 'connecting' || status === 'stopping'
-  const canStart = status === 'idle' || status === 'error'
-  const canChangeDevice = !isBusyTransition && !switchingDevice
-
   return (
     <div className='translation-session'>
       <div className='session-header'>
         <h2 className='session-title'>{title}</h2>
-        <div
-          className='status-badge'
-          data-state={status}>
-          {getStatusLabel(status)}
+        <div className='session-status-group'>
+          {status === 'connected' && stats && (
+            <span className='stats-chip'>
+              {stats.rttMs !== null ? `RTT ${stats.rttMs} ms` : 'Conectado'}
+              {stats.packetsLost > 0 ? ` · Perda ${stats.packetsLost}` : ''}
+            </span>
+          )}
+          <div
+            className='status-badge'
+            data-state={status}>
+            {getStatusLabel(status)}
+          </div>
         </div>
       </div>
 
@@ -336,8 +457,48 @@ export function TranslationSession({
           </label>
         </div>
 
+        {enableVolumeControl && (
+          <div className='control-panel compact'>
+            <label htmlFor={`volume-${sessionKey}`}>Volume da tradução ({Math.round(outputVolume * 100)}%)</label>
+            <input
+              id={`volume-${sessionKey}`}
+              className='volume-slider'
+              type='range'
+              min='0'
+              max='1.5'
+              step='0.05'
+              value={outputVolume}
+              onChange={event => handleOutputVolumeChange(event.target.value)}
+            />
+          </div>
+        )}
+
         <div
-          className='actions session-actions'
+          className={
+            enableVolumeControl ? 'control-panel compact meters-panel full-span' : 'control-panel compact meters-panel'
+          }>
+          <div className='meter-row'>
+            <span>Entrada</span>
+            <progress
+              className='audio-meter'
+              max={1}
+              value={levels.input}
+              aria-label='Nível de entrada'
+            />
+          </div>
+          <div className='meter-row'>
+            <span>Saída</span>
+            <progress
+              className='audio-meter'
+              max={1}
+              value={levels.output}
+              aria-label='Nível de saída'
+            />
+          </div>
+        </div>
+
+        <div
+          className='actions session-actions full-span'
           aria-label='Ações'>
           <button
             type='button'
@@ -355,6 +516,16 @@ export function TranslationSession({
             disabled={!isRunning}>
             Parar
           </button>
+          {enableMute && (
+            <button
+              type='button'
+              className='secondary-button mute-button'
+              data-muted={muted ? 'true' : 'false'}
+              onClick={toggleMute}
+              title='Atalho global: Ctrl+Shift+M'>
+              {muted ? 'Microfone mutado (Ctrl+Shift+M)' : 'Mutar microfone (Ctrl+Shift+M)'}
+            </button>
+          )}
         </div>
       </section>
 

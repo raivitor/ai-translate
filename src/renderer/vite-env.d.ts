@@ -16,6 +16,7 @@ declare global {
       }) => Promise<{ value: string; expiresAt: number }>
       getAudioBridgeStatus: () => Promise<AudioBridgeStatus>
       restartAudioBridge: () => Promise<AudioBridgeStatus>
+      onToggleOutboundMute: (callback: () => void) => () => void
     }
   }
 }

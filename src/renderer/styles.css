@@ -127,6 +127,22 @@ h2 {
   font-size: 1.25rem;
 }
 
+.session-status-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stats-chip {
+  padding: 6px 10px;
+  border: 1px solid #d3d9d4;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4b5a53;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .status-badge {
   min-width: 168px;
   padding: 10px 14px;
@@ -142,6 +158,12 @@ h2 {
   border-color: #2f7b64;
   background: #e7f4ee;
   color: #205744;
+}
+
+.status-badge[data-state='reconnecting'] {
+  border-color: #c28b2c;
+  background: #fff8e6;
+  color: #825a10;
 }
 
 .status-badge[data-state='error'] {
@@ -170,6 +192,61 @@ h2 {
 .control-panel.compact {
   min-height: 64px;
   align-self: stretch;
+}
+
+.full-span {
+  grid-column: 1 / -1;
+}
+
+.meters-panel {
+  gap: 8px;
+}
+
+.meter-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.meter-row span {
+  color: #5c6a63;
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.audio-meter {
+  width: 100%;
+  height: 10px;
+  appearance: none;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+  background: #e5ebe7;
+}
+
+.audio-meter::-webkit-progress-bar {
+  background: #e5ebe7;
+  border-radius: 999px;
+}
+
+.audio-meter::-webkit-progress-value {
+  background: #2f7b64;
+  border-radius: 999px;
+  transition: width 60ms linear;
+}
+
+.volume-slider {
+  width: 100%;
+  accent-color: #2f6f62;
+  cursor: pointer;
+}
+
+.mute-button[data-muted='true'] {
+  border-color: #b95b4d;
+  background: #fff0ed;
+  color: #8b372d;
 }
 
 .control-panel label {

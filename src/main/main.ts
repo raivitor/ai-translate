@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, globalShortcut, ipcMain, session, type IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -26,8 +26,23 @@ const securityConfig: RendererSecurityConfig = {
 
 const DEV_LOAD_MAX_ATTEMPTS = 5
 const DEV_LOAD_RETRY_DELAY_MS = 250
+const MUTE_SHORTCUT = 'CommandOrControl+Shift+M'
 
 const audioBridge = new PipeWireAudioBridge()
+
+function registerMuteShortcut(): void {
+  const registered = globalShortcut.register(MUTE_SHORTCUT, () => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) {
+        window.webContents.send('aiTranslate:toggleOutboundMute')
+      }
+    }
+  })
+
+  if (!registered) {
+    console.warn(`Global shortcut ${MUTE_SHORTCUT} could not be registered.`)
+  }
+}
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   const senderUrl = event.senderFrame?.url ?? event.sender.getURL()
@@ -187,6 +202,7 @@ app.whenReady().then(async () => {
   })
 
   configureMediaPermissions()
+  registerMuteShortcut()
   void audioBridge.ensureStarted()
   await createMainWindow()
 
@@ -198,6 +214,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('will-quit', () => {
+  globalShortcut.unregisterAll()
   audioBridge.stopManaged()
 })
 
