@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type { AudioBridgeStatus } from '../shared/audioBridgeTypes.js'
 import type { NoiseReductionMode } from '../shared/realtimeAudioConfig.js'
 
 contextBridge.exposeInMainWorld('aiTranslate', {
@@ -11,4 +12,6 @@ contextBridge.exposeInMainWorld('aiTranslate', {
     targetLanguage: string
     noiseReduction?: NoiseReductionMode
   }): Promise<{ value: string; expiresAt: number }> => ipcRenderer.invoke('aiTranslate:createClientSecret', params),
+  getAudioBridgeStatus: (): Promise<AudioBridgeStatus> => ipcRenderer.invoke('aiTranslate:getAudioBridgeStatus'),
+  restartAudioBridge: (): Promise<AudioBridgeStatus> => ipcRenderer.invoke('aiTranslate:restartAudioBridge'),
 })

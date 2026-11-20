@@ -99,3 +99,24 @@ export function selectDefaultAudioDevices(
     inboundOutputId: inboundOutput?.deviceId || '',
   }
 }
+
+export function resolveSavedDeviceId(
+  devices: readonly AudioDeviceLike[],
+  savedDeviceId: string,
+  savedDeviceLabel: string,
+  fallbackDeviceId: string,
+): string {
+  if (savedDeviceId && devices.some(device => device.deviceId === savedDeviceId)) {
+    return savedDeviceId
+  }
+
+  if (savedDeviceLabel) {
+    const matchedByLabel = devices.find(device => device.label === savedDeviceLabel)
+
+    if (matchedByLabel) {
+      return matchedByLabel.deviceId
+    }
+  }
+
+  return fallbackDeviceId
+}

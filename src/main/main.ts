@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { clearApiKey, hasApiKey, loadApiKey, saveApiKey } from './apiKeyStore.js'
+import { PipeWireAudioBridge } from './audioBridge.js'
 import { createClientSecret } from './openaiRealtimeHandler.js'
 import {
   isAllowedPermissionOrigin,
@@ -25,6 +26,8 @@ const securityConfig: RendererSecurityConfig = {
 
 const DEV_LOAD_MAX_ATTEMPTS = 5
 const DEV_LOAD_RETRY_DELAY_MS = 250
+
+const audioBridge = new PipeWireAudioBridge()
 
 function assertTrustedSender(event: IpcMainInvokeEvent): void {
   const senderUrl = event.senderFrame?.url ?? event.sender.getURL()
@@ -173,7 +176,18 @@ app.whenReady().then(async () => {
     })
   })
 
+  ipcMain.handle('aiTranslate:getAudioBridgeStatus', event => {
+    assertTrustedSender(event)
+    return audioBridge.getStatus()
+  })
+
+  ipcMain.handle('aiTranslate:restartAudioBridge', event => {
+    assertTrustedSender(event)
+    return audioBridge.restart()
+  })
+
   configureMediaPermissions()
+  void audioBridge.ensureStarted()
   await createMainWindow()
 
   app.on('activate', () => {
@@ -181,6 +195,10 @@ app.whenReady().then(async () => {
       void createMainWindow()
     }
   })
+})
+
+app.on('will-quit', () => {
+  audioBridge.stopManaged()
 })
 
 app.on('window-all-closed', () => {

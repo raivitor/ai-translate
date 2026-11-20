@@ -73,6 +73,23 @@ function createLatencyLogger(): LatencyLogger {
 
 export type ActiveTranslationSession = {
   stop: () => void
+  setInputDevice: (deviceId: string) => Promise<void>
+  setOutputDevice: (deviceId: string) => Promise<void>
+}
+
+const NOOP_SESSION: ActiveTranslationSession = {
+  stop: () => undefined,
+  setInputDevice: async () => undefined,
+  setOutputDevice: async () => undefined,
+}
+
+function buildAudioConstraints(deviceId: string, disableAudioDSP?: boolean): MediaTrackConstraints {
+  return {
+    echoCancellation: !disableAudioDSP,
+    noiseSuppression: !disableAudioDSP,
+    autoGainControl: !disableAudioDSP,
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  }
 }
 
 function getRealtimeErrorMessage(realtimeEvent: RealtimeServerEvent): string | undefined {
@@ -175,7 +192,7 @@ export async function startTranslationSession({
   callbacks,
 }: StartTranslationSessionOptions): Promise<ActiveTranslationSession> {
   if (signal?.aborted) {
-    return { stop: () => undefined }
+    return NOOP_SESSION
   }
 
   if (!window.aiTranslate) {
@@ -186,15 +203,11 @@ export async function startTranslationSession({
   latencyLogger.mark('start')
   callbacks.onStatusChange('requesting-media')
 
-  const audioConstraints: MediaTrackConstraints = {
-    echoCancellation: !disableAudioDSP,
-    noiseSuppression: !disableAudioDSP,
-    autoGainControl: !disableAudioDSP,
-    ...(inputDeviceId ? { deviceId: { exact: inputDeviceId } } : {}),
-  }
+  const audioConstraints = buildAudioConstraints(inputDeviceId, disableAudioDSP)
 
   let inputStream: MediaStream | undefined
   let peerConnection: RTCPeerConnection | undefined
+  let audioSender: RTCRtpSender | undefined
   let dataChannel: RTCDataChannel | undefined
   let audioContext: AudioContextWithSinkId | undefined
   let remoteAudioSource: MediaStreamAudioSourceNode | undefined
@@ -309,7 +322,7 @@ export async function startTranslationSession({
     ])
 
     if (isClosed) {
-      return { stop: closeSession }
+      return NOOP_SESSION
     }
 
     const [inputTrack] = capturedInputStream.getAudioTracks()
@@ -318,7 +331,7 @@ export async function startTranslationSession({
       throw new Error('No microphone audio track was captured.')
     }
 
-    peerConnection.addTrack(inputTrack, capturedInputStream)
+    audioSender = peerConnection.addTrack(inputTrack, capturedInputStream)
 
     peerConnection.addEventListener('track', event => {
       if (isClosed || audioElement.srcObject) {
@@ -382,7 +395,7 @@ export async function startTranslationSession({
     }
 
     if (isClosed) {
-      return { stop: closeSession }
+      return NOOP_SESSION
     }
 
     await peerConnection.setRemoteDescription({
@@ -392,7 +405,7 @@ export async function startTranslationSession({
     latencyLogger.mark('remote description applied')
 
     if (isClosed) {
-      return { stop: closeSession }
+      return NOOP_SESSION
     }
 
     callbacks.onStatusChange('connected')
@@ -406,12 +419,69 @@ export async function startTranslationSession({
         closeSession()
         callbacks.onStatusChange('idle')
       },
+      setInputDevice: async (nextDeviceId: string) => {
+        if (isClosed || !audioSender) {
+          return
+        }
+
+        const nextStream = await navigator.mediaDevices.getUserMedia({
+          audio: buildAudioConstraints(nextDeviceId, disableAudioDSP),
+          video: false,
+        })
+
+        if (isClosed) {
+          stopStream(nextStream)
+          return
+        }
+
+        const [nextTrack] = nextStream.getAudioTracks()
+
+        if (!nextTrack) {
+          stopStream(nextStream)
+          throw new Error('No microphone audio track was captured.')
+        }
+
+        try {
+          await audioSender.replaceTrack(nextTrack)
+        } catch (error) {
+          stopStream(nextStream)
+          throw error
+        }
+
+        if (isClosed) {
+          stopStream(nextStream)
+          return
+        }
+
+        const previousStream = inputStream
+        inputStream = nextStream
+        if (previousStream) {
+          stopStream(previousStream)
+        }
+      },
+      setOutputDevice: async (nextDeviceId: string) => {
+        if (isClosed) {
+          return
+        }
+
+        if (audioContext?.setSinkId) {
+          await audioContext.setSinkId(nextDeviceId)
+          return
+        }
+
+        if (audioElement.setSinkId) {
+          await audioElement.setSinkId(nextDeviceId)
+          return
+        }
+
+        throw new Error('This runtime does not support selecting an audio output device.')
+      },
     }
   } catch (error) {
     closeSession()
 
     if (signal?.aborted) {
-      return { stop: closeSession }
+      return NOOP_SESSION
     }
 
     throw error

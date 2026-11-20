@@ -233,15 +233,15 @@ start_loopback_once() {
 
   local capture_props
   local playback_props
-  capture_props="{ media.class = \"Audio/Sink\" node.name = \"$capture_node\" node.description = \"$capture_label\" node.virtual = true audio.position = [ FL FR ] }"
-  playback_props="{ media.class = \"Audio/Source\" node.name = \"$playback_node\" node.description = \"$playback_label\" node.virtual = true audio.position = [ FL FR ] }"
+  capture_props="{ media.class = \"Audio/Sink\" node.name = \"$capture_node\" node.description = \"$capture_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] }"
+  playback_props="{ media.class = \"Audio/Source\" node.name = \"$playback_node\" node.description = \"$playback_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] }"
 
   nohup env PIPEWIRE_LATENCY="$LOOPBACK_QUANTUM/48000" pw-loopback \
     -n "$group_name" \
     -g "$group_name" \
-    -c 2 \
+    -c 1 \
     -l "$LOOPBACK_LATENCY_MS" \
-    -m '[ FL, FR ]' \
+    -m '[ MONO ]' \
     --capture-props "$capture_props" \
     --playback-props "$playback_props" \
     >/dev/null 2>&1 &
@@ -274,17 +274,19 @@ write_state_file() {
 TO_MEET_LOOPBACK_PID=${TO_MEET_LOOPBACK_PID:-}
 FROM_MEET_LOOPBACK_PID=${FROM_MEET_LOOPBACK_PID:-}
 LOOPBACK_LATENCY_MS=$LOOPBACK_LATENCY_MS
+LOOPBACK_QUANTUM=$LOOPBACK_QUANTUM
 EOF
   then
     echo "Warning: could not write $STATE_FILE; continuing without setup state." >&2
   fi
 }
 
-recreate_loopbacks_if_latency_changed() {
-  local configured_latency
+recreate_loopbacks_if_config_changed() {
+  local configured_latency configured_quantum
   configured_latency="$(read_state_value LOOPBACK_LATENCY_MS)"
+  configured_quantum="$(read_state_value LOOPBACK_QUANTUM)"
 
-  if [[ "$configured_latency" == "$LOOPBACK_LATENCY_MS" ]]; then
+  if [[ "$configured_latency" == "$LOOPBACK_LATENCY_MS" && "$configured_quantum" == "$LOOPBACK_QUANTUM" ]]; then
     return
   fi
 
@@ -292,11 +294,7 @@ recreate_loopbacks_if_latency_changed() {
     return
   fi
 
-  if [[ -n "$configured_latency" ]]; then
-    echo "Loopback latency changed from ${configured_latency}ms to ${LOOPBACK_LATENCY_MS}ms; recreating managed loopbacks."
-  else
-    echo "Loopback latency is unknown; recreating managed loopbacks with ${LOOPBACK_LATENCY_MS}ms."
-  fi
+  echo "Loopback settings changed (latency=${LOOPBACK_LATENCY_MS}ms, quantum=${LOOPBACK_QUANTUM}); recreating managed loopbacks."
 
   stop_loopback "$TO_MEET_GROUP" "TO_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
   stop_loopback "$FROM_MEET_GROUP" "FROM_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
@@ -397,8 +395,9 @@ print_node_status() {
 }
 
 print_status() {
-  local configured_latency
+  local configured_latency configured_quantum
   configured_latency="$(read_state_value LOOPBACK_LATENCY_MS)"
+  configured_quantum="$(read_state_value LOOPBACK_QUANTUM)"
 
   print_audio_stack
   echo
@@ -420,10 +419,21 @@ print_status() {
     echo "Loopback latency: unknown"
     echo "Requested latency for next setup: ${LOOPBACK_LATENCY_MS}ms"
   fi
+
+  if [[ -n "$configured_quantum" ]]; then
+    echo "Loopback quantum: ${configured_quantum} samples"
+
+    if [[ "$configured_quantum" != "$LOOPBACK_QUANTUM" ]]; then
+      echo "Requested quantum for next setup: ${LOOPBACK_QUANTUM} samples"
+    fi
+  else
+    echo "Loopback quantum: unknown"
+    echo "Requested quantum for next setup: ${LOOPBACK_QUANTUM} samples"
+  fi
 }
 
 setup_audio() {
-  recreate_loopbacks_if_latency_changed
+  recreate_loopbacks_if_config_changed
 
   start_loopback_once \
     TO_MEET_LOOPBACK_PID \

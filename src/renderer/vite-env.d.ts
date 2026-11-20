@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import type { AudioBridgeStatus } from '../shared/audioBridgeTypes.js'
 import type { NoiseReductionMode } from '../shared/realtimeAudioConfig.js'
 
 declare global {
@@ -13,6 +14,8 @@ declare global {
         targetLanguage: string
         noiseReduction?: NoiseReductionMode | undefined
       }) => Promise<{ value: string; expiresAt: number }>
+      getAudioBridgeStatus: () => Promise<AudioBridgeStatus>
+      restartAudioBridge: () => Promise<AudioBridgeStatus>
     }
   }
 }

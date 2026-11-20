@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
+import { resolveSavedDeviceId } from '../../shared/deviceSelection.js'
 import {
   NOISE_REDUCTION_OPTIONS,
   resolveNoiseReductionMode,
@@ -70,12 +71,14 @@ export function TranslationSession({
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined)
   const startAbortController = useRef<AbortController | undefined>(undefined)
 
-  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState(
-    () => localStorage.getItem(`ai_translate_${sessionKey}_input`) ?? '',
-  )
-  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState(
-    () => localStorage.getItem(`ai_translate_${sessionKey}_output`) ?? '',
-  )
+  const [selectedInput, setSelectedInput] = useState(() => ({
+    id: localStorage.getItem(`ai_translate_${sessionKey}_input`) ?? '',
+    label: localStorage.getItem(`ai_translate_${sessionKey}_input_label`) ?? '',
+  }))
+  const [selectedOutput, setSelectedOutput] = useState(() => ({
+    id: localStorage.getItem(`ai_translate_${sessionKey}_output`) ?? '',
+    label: localStorage.getItem(`ai_translate_${sessionKey}_output_label`) ?? '',
+  }))
   const [targetLanguage, setTargetLanguage] = useState<TranslationLanguageCode>(() => {
     const stored = localStorage.getItem(`ai_translate_${sessionKey}_target_language`)
     return (stored && resolveTranslationLanguageCode(stored)) || initialTargetLanguage
@@ -89,23 +92,53 @@ export function TranslationSession({
     return stored === 'true' ? true : stored === 'false' ? false : initialBrowserDsp
   })
   const [status, setStatus] = useState<TranslationStatus>('idle')
+  const [switchingDevice, setSwitchingDevice] = useState(false)
   const [error, setError] = useState('')
 
-  const inputDeviceId = inputDevices.some(device => device.deviceId === selectedInputDeviceId)
-    ? selectedInputDeviceId
-    : initialInputDeviceId
-  const outputDeviceId = outputDevices.some(device => device.deviceId === selectedOutputDeviceId)
-    ? selectedOutputDeviceId
-    : initialOutputDeviceId
+  const inputDeviceId = resolveSavedDeviceId(inputDevices, selectedInput.id, selectedInput.label, initialInputDeviceId)
+  const outputDeviceId = resolveSavedDeviceId(
+    outputDevices,
+    selectedOutput.id,
+    selectedOutput.label,
+    initialOutputDeviceId,
+  )
 
-  function handleInputDeviceChange(deviceId: string): void {
-    setSelectedInputDeviceId(deviceId)
-    localStorage.setItem(`ai_translate_${sessionKey}_input`, deviceId)
-  }
+  async function switchDevice(kind: 'input' | 'output', deviceId: string): Promise<void> {
+    const devices = kind === 'input' ? inputDevices : outputDevices
+    const deviceLabel = devices.find(device => device.deviceId === deviceId)?.label ?? ''
+    const saveSelection = (): void => {
+      const next = { id: deviceId, label: deviceLabel }
+      if (kind === 'input') {
+        setSelectedInput(next)
+      } else {
+        setSelectedOutput(next)
+      }
+      localStorage.setItem(`ai_translate_${sessionKey}_${kind}`, deviceId)
+      localStorage.setItem(`ai_translate_${sessionKey}_${kind}_label`, deviceLabel)
+    }
 
-  function handleOutputDeviceChange(deviceId: string): void {
-    setSelectedOutputDeviceId(deviceId)
-    localStorage.setItem(`ai_translate_${sessionKey}_output`, deviceId)
+    if (!activeSession.current || status !== 'connected') {
+      saveSelection()
+      return
+    }
+
+    setError('')
+    setSwitchingDevice(true)
+
+    try {
+      if (kind === 'input') {
+        await activeSession.current.setInputDevice(deviceId)
+      } else {
+        await activeSession.current.setOutputDevice(deviceId)
+      }
+      saveSelection()
+    } catch (caughtError) {
+      const fallbackMessage =
+        kind === 'input' ? 'Falha ao trocar microfone ao vivo.' : 'Falha ao trocar saída de áudio ao vivo.'
+      setError(caughtError instanceof Error ? caughtError.message : fallbackMessage)
+    } finally {
+      setSwitchingDevice(false)
+    }
   }
 
   function handleTargetLanguageChange(language: string): void {
@@ -201,7 +234,9 @@ export function TranslationSession({
   }, [])
 
   const isRunning = status === 'requesting-media' || status === 'connecting' || status === 'connected'
+  const isBusyTransition = status === 'requesting-media' || status === 'connecting' || status === 'stopping'
   const canStart = status === 'idle' || status === 'error'
+  const canChangeDevice = !isBusyTransition && !switchingDevice
 
   return (
     <div className='translation-session'>
@@ -256,8 +291,10 @@ export function TranslationSession({
           <select
             id={`input-device-${sessionKey}`}
             value={inputDeviceId}
-            onChange={event => handleInputDeviceChange(event.target.value)}
-            disabled={isRunning}>
+            onChange={event => {
+              void switchDevice('input', event.target.value)
+            }}
+            disabled={!canChangeDevice}>
             {inputDevices.map((device, index) => (
               <option
                 key={device.deviceId || index}
@@ -273,8 +310,10 @@ export function TranslationSession({
           <select
             id={`output-device-${sessionKey}`}
             value={outputDeviceId}
-            onChange={event => handleOutputDeviceChange(event.target.value)}
-            disabled={isRunning}>
+            onChange={event => {
+              void switchDevice('output', event.target.value)
+            }}
+            disabled={!canChangeDevice}>
             {outputDevices.map((device, index) => (
               <option
                 key={device.deviceId || index}

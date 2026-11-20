@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { selectDefaultAudioDevices, type AudioDeviceLike } from './deviceSelection.js'
+import { resolveSavedDeviceId, selectDefaultAudioDevices, type AudioDeviceLike } from './deviceSelection.js'
 
 test('selectDefaultAudioDevices prioritizes HyperX Cloud III Analog output and mic alongside AI-Translate nodes', () => {
   const inputs: AudioDeviceLike[] = [
@@ -57,4 +57,26 @@ test('selectDefaultAudioDevices falls back cleanly when HyperX Cloud III is abse
   assert.strictEqual(selection.outboundOutputId, 'out-to-meet')
   assert.strictEqual(selection.inboundInputId, 'mic-from-meet')
   assert.strictEqual(selection.inboundOutputId, 'out-headset')
+})
+
+test('resolveSavedDeviceId matches by deviceId, falls back to label on reconnect, then default', () => {
+  const devices: AudioDeviceLike[] = [
+    { deviceId: 'new-id-123', kind: 'audiooutput', label: 'HyperX Cloud III Analog Stereo' },
+    { deviceId: 'other-id', kind: 'audiooutput', label: 'Built-in Speakers' },
+  ]
+
+  // Exact deviceId match
+  assert.strictEqual(
+    resolveSavedDeviceId(devices, 'other-id', 'HyperX Cloud III Analog Stereo', 'new-id-123'),
+    'other-id',
+  )
+
+  // Device reconnected with a new deviceId, recovered via saved label
+  assert.strictEqual(
+    resolveSavedDeviceId(devices, 'stale-old-id', 'HyperX Cloud III Analog Stereo', 'other-id'),
+    'new-id-123',
+  )
+
+  // Neither ID nor label exists anymore -> uses fallback
+  assert.strictEqual(resolveSavedDeviceId(devices, 'stale-old-id', 'Removed Headset', 'new-id-123'), 'new-id-123')
 })

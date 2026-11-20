@@ -48,6 +48,35 @@ input {
   border-bottom: 1px solid #d3d9d4;
 }
 
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.bridge-badge {
+  padding: 8px 12px;
+  border: 1px solid #bcc9c0;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #25312b;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.bridge-badge[data-ready='true'] {
+  border-color: #2f7b64;
+  background: #e7f4ee;
+  color: #205744;
+}
+
+.bridge-badge[data-ready='false'] {
+  border-color: #b95b4d;
+  background: #fff0ed;
+  color: #8b372d;
+}
+
 .eyebrow {
   display: block;
   margin-bottom: 8px;

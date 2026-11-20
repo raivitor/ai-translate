@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import type { AudioBridgeStatus } from '../../shared/audioBridgeTypes.js'
 import { selectDefaultAudioDevices } from '../../shared/deviceSelection.js'
 import type { TranslationLanguageCode } from '../../shared/translationLanguages.js'
 import { ApiKeySettings } from './ApiKeySettings.js'
@@ -7,6 +8,34 @@ import { TranslationSession } from './TranslationSession.js'
 
 const DEFAULT_OUTBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'en'
 const DEFAULT_INBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'pt'
+
+function getAudioBridgeLabel(status: AudioBridgeStatus): string {
+  if (status.ready) {
+    return status.managedByApp
+      ? 'PipeWire: dispositivos virtuais ativos (app)'
+      : 'PipeWire: dispositivos virtuais ativos'
+  }
+
+  return status.error ? `PipeWire: ${status.error}` : 'PipeWire: dispositivos virtuais pendentes'
+}
+
+function isAudioDevice(device: MediaDeviceInfo): boolean {
+  return device.kind === 'audioinput' || device.kind === 'audiooutput'
+}
+
+async function listAudioDevices(autoUnlock: boolean): Promise<MediaDeviceInfo[]> {
+  let audioDevices = (await navigator.mediaDevices.enumerateDevices()).filter(isAudioDevice)
+
+  if (autoUnlock && audioDevices.some(device => !device.label)) {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    for (const track of stream.getTracks()) {
+      track.stop()
+    }
+    audioDevices = (await navigator.mediaDevices.enumerateDevices()).filter(isAudioDevice)
+  }
+
+  return audioDevices
+}
 
 export function App() {
   const aiTranslate = window.aiTranslate
@@ -16,25 +45,78 @@ export function App() {
   )
   const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(() => (aiTranslate ? null : false))
   const [showSettings, setShowSettings] = useState(false)
+  const [audioBridgeStatus, setAudioBridgeStatus] = useState<AudioBridgeStatus | null>(null)
+  const [restartingBridge, setRestartingBridge] = useState(false)
 
   useEffect(() => {
     if (!aiTranslate) {
       return
     }
 
+    let active = true
+
     void aiTranslate
       .hasApiKey()
       .then(configured => {
-        setApiKeyConfigured(configured)
+        if (active) {
+          setApiKeyConfigured(configured)
+        }
       })
       .catch(caughtError => {
-        setError(caughtError instanceof Error ? caughtError.message : 'Não foi possível verificar a chave da OpenAI.')
-        setApiKeyConfigured(false)
+        if (active) {
+          setError(caughtError instanceof Error ? caughtError.message : 'Não foi possível verificar a chave da OpenAI.')
+          setApiKeyConfigured(false)
+        }
       })
+
+    return () => {
+      active = false
+    }
+  }, [aiTranslate])
+
+  useEffect(() => {
+    let active = true
+
+    const syncDevicesAndBridge = async (autoUnlock: boolean): Promise<void> => {
+      if (aiTranslate) {
+        try {
+          const bridgeStatus = await aiTranslate.getAudioBridgeStatus()
+          if (active) {
+            setAudioBridgeStatus(bridgeStatus)
+          }
+        } catch {
+          // Non-fatal; device enumeration still proceeds.
+        }
+      }
+
+      try {
+        const availableDevices = await listAudioDevices(autoUnlock).catch(() => listAudioDevices(false))
+        if (active) {
+          setDevices(availableDevices)
+        }
+      } catch {
+        if (active) {
+          setError('Não foi possível listar dispositivos de áudio.')
+        }
+      }
+    }
+
+    const handleDeviceChange = (): void => {
+      void syncDevicesAndBridge(false)
+    }
+
+    void syncDevicesAndBridge(true)
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange)
+
+    return () => {
+      active = false
+      navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange)
+    }
   }, [aiTranslate])
 
   const inputDevices = useMemo(() => devices.filter(device => device.kind === 'audioinput'), [devices])
   const outputDevices = useMemo(() => devices.filter(device => device.kind === 'audiooutput'), [devices])
+  const hasMissingDeviceLabels = useMemo(() => devices.length > 0 && devices.some(device => !device.label), [devices])
 
   const defaultDevices = useMemo(
     () => selectDefaultAudioDevices(inputDevices, outputDevices),
@@ -44,38 +126,31 @@ export function App() {
   async function requestDeviceAccess(): Promise<void> {
     try {
       setError('')
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false,
-      })
-
-      for (const track of stream.getTracks()) {
-        track.stop()
-      }
-
-      setDevices(await navigator.mediaDevices.enumerateDevices())
+      setDevices(await listAudioDevices(true))
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Não foi possível liberar os dispositivos.')
     }
   }
 
-  useEffect(() => {
-    const loadDevices = (): void => {
-      void navigator.mediaDevices
-        .enumerateDevices()
-        .then(setDevices)
-        .catch(() => {
-          setError('Não foi possível listar dispositivos de áudio.')
-        })
+  async function handleRestartAudioBridge(): Promise<void> {
+    if (!aiTranslate) {
+      return
     }
 
-    loadDevices()
-    navigator.mediaDevices.addEventListener('devicechange', loadDevices)
+    setRestartingBridge(true)
 
-    return () => {
-      navigator.mediaDevices.removeEventListener('devicechange', loadDevices)
+    try {
+      const status = await aiTranslate.restartAudioBridge()
+      setAudioBridgeStatus(status)
+      setDevices(await listAudioDevices(false))
+    } catch (caughtError) {
+      setError(
+        caughtError instanceof Error ? caughtError.message : 'Não foi possível recriar os dispositivos PipeWire.',
+      )
+    } finally {
+      setRestartingBridge(false)
     }
-  }, [])
+  }
 
   return (
     <main className='app-shell'>
@@ -86,17 +161,26 @@ export function App() {
           <span className='eyebrow'>Linux virtual audio bridge</span>
           <h1 id='app-title'>Ai Translate</h1>
         </div>
-        {apiKeyConfigured && !showSettings && (
-          <button
-            type='button'
-            className='secondary-button'
-            onClick={() => {
-              setShowSettings(true)
-            }}
-            aria-label='Configurações'>
-            Configurações
-          </button>
-        )}
+        <div className='toolbar-actions'>
+          {audioBridgeStatus?.supported && (
+            <div
+              className='bridge-badge'
+              data-ready={audioBridgeStatus.ready ? 'true' : 'false'}>
+              {getAudioBridgeLabel(audioBridgeStatus)}
+            </div>
+          )}
+          {apiKeyConfigured && !showSettings && (
+            <button
+              type='button'
+              className='secondary-button'
+              onClick={() => {
+                setShowSettings(true)
+              }}
+              aria-label='Configurações'>
+              Configurações
+            </button>
+          )}
+        </div>
       </section>
 
       {(apiKeyConfigured === false || showSettings) && (
@@ -124,18 +208,33 @@ export function App() {
 
       {apiKeyConfigured === true && !showSettings && (
         <>
-          <section
-            className='actions global-actions'
-            aria-label='Ações globais'>
-            <button
-              type='button'
-              className='secondary-button'
-              onClick={() => {
-                void requestDeviceAccess()
-              }}>
-              Liberar acesso aos dispositivos
-            </button>
-          </section>
+          {(hasMissingDeviceLabels || (audioBridgeStatus?.supported && !audioBridgeStatus.ready)) && (
+            <section
+              className='actions global-actions'
+              aria-label='Ações globais'>
+              {hasMissingDeviceLabels && (
+                <button
+                  type='button'
+                  className='secondary-button'
+                  onClick={() => {
+                    void requestDeviceAccess()
+                  }}>
+                  Liberar acesso aos dispositivos
+                </button>
+              )}
+              {audioBridgeStatus?.supported && !audioBridgeStatus.ready && (
+                <button
+                  type='button'
+                  className='secondary-button'
+                  disabled={restartingBridge}
+                  onClick={() => {
+                    void handleRestartAudioBridge()
+                  }}>
+                  {restartingBridge ? 'Recriando áudio virtual...' : 'Recriar áudio virtual'}
+                </button>
+              )}
+            </section>
+          )}
 
           {error && <p className='error-message'>{error}</p>}
 
