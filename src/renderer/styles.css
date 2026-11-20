@@ -26,7 +26,8 @@ body {
 }
 
 button,
-select {
+select,
+input {
   font: inherit;
 }
 
@@ -75,6 +76,28 @@ h2 {
   line-height: 1.25;
 }
 
+.global-actions {
+  margin-bottom: 0.5rem;
+}
+
+.translation-session {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.session-title {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
 .status-badge {
   min-width: 168px;
   padding: 10px 14px;
@@ -115,20 +138,31 @@ h2 {
   background: #ffffff;
 }
 
-.control-panel label,
-.control-panel span {
+.control-panel.compact {
+  min-height: 64px;
+  align-self: stretch;
+}
+
+.control-panel label {
   color: #5c6a63;
   font-size: 0.8rem;
   font-weight: 800;
   text-transform: uppercase;
 }
 
-.control-panel strong {
-  overflow-wrap: anywhere;
-  color: #17201c;
+.control-panel .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: #1f2a25;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: none;
 }
 
-select {
+select,
+input[type='password'] {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
@@ -138,7 +172,8 @@ select {
   color: #17201c;
 }
 
-select:disabled {
+select:disabled,
+input:disabled {
   color: #79847e;
   background: #eef1ef;
 }
@@ -148,6 +183,10 @@ select:disabled {
   flex-wrap: wrap;
   gap: 10px;
   align-items: center;
+}
+
+.session-actions {
+  align-self: center;
 }
 
 button {
@@ -194,57 +233,29 @@ button:disabled {
   gap: 2rem;
 }
 
-.transcript-grid {
+.api-key-settings {
+  max-width: 560px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
-}
-
-.transcript-grid article {
-  min-height: 220px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 14px;
-  padding: 18px;
+  padding: 20px;
   border: 1px solid #d3d9d4;
   border-radius: 8px;
   background: #ffffff;
 }
 
-.transcript-grid p {
-  overflow: auto;
-  color: #3e4b45;
-  line-height: 1.6;
-  white-space: pre-wrap;
+.settings-description {
+  color: #4b5a53;
+  line-height: 1.5;
 }
 
-.runtime-strip {
+.settings-form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
-.runtime-strip div {
-  min-height: 72px;
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  padding: 14px;
-  border: 1px solid #d3d9d4;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.runtime-strip span {
-  color: #5c6a63;
-  font-size: 0.78rem;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.runtime-strip strong {
-  overflow-wrap: anywhere;
-  color: #17201c;
+.settings-actions {
+  display: flex;
+  gap: 10px;
 }
 
 @media (max-width: 820px) {
@@ -252,7 +263,8 @@ button:disabled {
     padding: 22px;
   }
 
-  .toolbar {
+  .toolbar,
+  .session-header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -262,9 +274,7 @@ button:disabled {
   }
 
   .control-grid,
-  .sessions-grid,
-  .transcript-grid,
-  .runtime-strip {
+  .sessions-grid {
     grid-template-columns: 1fr;
   }
 

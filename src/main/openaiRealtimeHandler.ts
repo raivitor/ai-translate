@@ -1,20 +1,19 @@
 import {
-  resolveTranslationLanguageCode,
-  SUPPORTED_TRANSLATION_LANGUAGE_CODES,
-  type TranslationLanguageCode,
-} from '../shared/translationLanguages.js'
+  resolveNoiseReductionMode,
+  SUPPORTED_NOISE_REDUCTION_MODES,
+  type NoiseReductionMode,
+} from '../shared/realtimeAudioConfig.js'
+import { resolveTranslationLanguageCode, SUPPORTED_TRANSLATION_LANGUAGE_CODES } from '../shared/translationLanguages.js'
 
 export const SUPPORTED_TARGET_LANGUAGES = SUPPORTED_TRANSLATION_LANGUAGE_CODES
 export const DEFAULT_CLIENT_SECRET_TTL_SECONDS = 600
 export const OPENAI_REALTIME_MODEL = 'gpt-realtime-translate'
-export const OPENAI_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
 
 const OPENAI_TRANSLATION_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/translations/client_secrets'
 
 export type CreateClientSecretParams = {
   targetLanguage: string
-  enableTranscription?: boolean | undefined
-  transcriptionLanguage?: string | undefined
+  noiseReduction?: NoiseReductionMode | undefined
   apiKey: string
   model?: string
 }
@@ -25,12 +24,8 @@ export type ClientSecretResult = {
 }
 
 type OpenAiTranslationAudioInputConfig = {
-  transcription?: {
-    model: typeof OPENAI_REALTIME_TRANSCRIPTION_MODEL
-    language?: TranslationLanguageCode
-  }
   noise_reduction: null | {
-    type: 'near_field'
+    type: 'near_field' | 'far_field'
   }
 }
 
@@ -56,7 +51,7 @@ function getOpenAiErrorMessage(responseBody: Record<string, unknown>): string | 
 
 export async function createClientSecret({
   targetLanguage,
-  enableTranscription,
+  noiseReduction = 'off',
   apiKey,
   model = OPENAI_REALTIME_MODEL,
 }: CreateClientSecretParams): Promise<ClientSecretResult> {
@@ -66,18 +61,14 @@ export async function createClientSecret({
     throw new Error(`targetLanguage must be one of: ${[...SUPPORTED_TARGET_LANGUAGES].join(', ')}.`)
   }
 
-  const audioInputConfig: OpenAiTranslationAudioInputConfig = {
-    noise_reduction: null,
+  const resolvedNoiseReduction = resolveNoiseReductionMode(noiseReduction)
+
+  if (!resolvedNoiseReduction) {
+    throw new Error(`noiseReduction must be one of: ${[...SUPPORTED_NOISE_REDUCTION_MODES].join(', ')}.`)
   }
 
-  if (enableTranscription === true) {
-    audioInputConfig.noise_reduction = {
-      type: 'near_field',
-    }
-
-    audioInputConfig.transcription = {
-      model: OPENAI_REALTIME_TRANSCRIPTION_MODEL,
-    }
+  const audioInputConfig: OpenAiTranslationAudioInputConfig = {
+    noise_reduction: resolvedNoiseReduction === 'off' ? null : { type: resolvedNoiseReduction },
   }
 
   const openAiResponse = await fetch(OPENAI_TRANSLATION_CLIENT_SECRETS_URL, {
@@ -105,8 +96,7 @@ export async function createClientSecret({
   })
 
   const responseBody = (await openAiResponse.json().catch(() => ({}))) as
-    | OpenAiTranslationClientSecretResponse
-    | Record<string, unknown>
+    OpenAiTranslationClientSecretResponse | Record<string, unknown>
 
   if (!openAiResponse.ok) {
     const openAiErrorMessage = getOpenAiErrorMessage(responseBody)

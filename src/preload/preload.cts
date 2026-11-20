@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+import type { NoiseReductionMode } from '../shared/realtimeAudioConfig.js'
+
 contextBridge.exposeInMainWorld('aiTranslate', {
   platform: process.platform,
   setApiKey: (key: string): Promise<void> => ipcRenderer.invoke('aiTranslate:setApiKey', key),
@@ -7,7 +9,6 @@ contextBridge.exposeInMainWorld('aiTranslate', {
   clearApiKey: (): Promise<void> => ipcRenderer.invoke('aiTranslate:clearApiKey'),
   createClientSecret: (params: {
     targetLanguage: string
-    enableTranscription?: boolean
-    transcriptionLanguage?: string
+    noiseReduction?: NoiseReductionMode
   }): Promise<{ value: string; expiresAt: number }> => ipcRenderer.invoke('aiTranslate:createClientSecret', params),
 })

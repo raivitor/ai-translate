@@ -1,4 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+
+import {
+  NOISE_REDUCTION_OPTIONS,
+  resolveNoiseReductionMode,
+  type NoiseReductionMode,
+} from '../../shared/realtimeAudioConfig.js'
 import {
   resolveTranslationLanguageCode,
   TRANSLATION_LANGUAGES,
@@ -8,13 +14,7 @@ import {
   type ActiveTranslationSession,
   startTranslationSession,
   type TranslationStatus,
-  type TranslationTranscriptEvent,
 } from '../services/realtimeTranslation.js'
-
-export type TranscriptState = {
-  source: string
-  target: string
-}
 
 function formatDeviceLabel(device: MediaDeviceInfo, fallback: string): string {
   return device.label || fallback
@@ -27,7 +27,7 @@ function getStatusLabel(status: TranslationStatus): string {
     case 'connecting':
       return 'Conectando Realtime'
     case 'connected':
-      return 'Traducao ativa'
+      return 'Tradução ativa'
     case 'stopping':
       return 'Encerrando'
     case 'error':
@@ -42,7 +42,8 @@ export interface TranslationSessionProps {
   sessionKey: string
   title: string
   initialTargetLanguage: TranslationLanguageCode
-  transcriptionLanguage?: TranslationLanguageCode
+  initialNoiseReduction: NoiseReductionMode
+  initialBrowserDsp: boolean
   inputDevices: MediaDeviceInfo[]
   outputDevices: MediaDeviceInfo[]
   initialInputDeviceId: string
@@ -50,14 +51,14 @@ export interface TranslationSessionProps {
   targetLanguageLabel: string
   inputLabel: string
   outputLabel: string
-  disableAudioDSP?: boolean
 }
 
 export function TranslationSession({
   sessionKey,
   title,
   initialTargetLanguage,
-  transcriptionLanguage,
+  initialNoiseReduction,
+  initialBrowserDsp,
   inputDevices,
   outputDevices,
   initialInputDeviceId,
@@ -65,89 +66,46 @@ export function TranslationSession({
   targetLanguageLabel,
   inputLabel,
   outputLabel,
-  disableAudioDSP,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined)
-  const hasManualInputSelection = useRef(false)
-  const hasManualOutputSelection = useRef(false)
-  const pendingTranscript = useRef<TranscriptState>({ source: '', target: '' })
-  const transcriptFlushFrame = useRef<number | undefined>(undefined)
-  const [inputDeviceId, setInputDeviceId] = useState(() => {
-    return localStorage.getItem(`ai_translate_${sessionKey}_input`) || initialInputDeviceId
-  })
-  const [outputDeviceId, setOutputDeviceId] = useState(() => {
-    return localStorage.getItem(`ai_translate_${sessionKey}_output`) || initialOutputDeviceId
-  })
-  const [targetLanguage, setTargetLanguage] = useState<TranslationLanguageCode>(() => {
-    const storedLanguage = localStorage.getItem(`ai_translate_${sessionKey}_target_language`)
+  const startAbortController = useRef<AbortController | undefined>(undefined)
 
-    return storedLanguage
-      ? (resolveTranslationLanguageCode(storedLanguage) ?? initialTargetLanguage)
-      : initialTargetLanguage
+  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState(
+    () => localStorage.getItem(`ai_translate_${sessionKey}_input`) ?? '',
+  )
+  const [selectedOutputDeviceId, setSelectedOutputDeviceId] = useState(
+    () => localStorage.getItem(`ai_translate_${sessionKey}_output`) ?? '',
+  )
+  const [targetLanguage, setTargetLanguage] = useState<TranslationLanguageCode>(() => {
+    const stored = localStorage.getItem(`ai_translate_${sessionKey}_target_language`)
+    return (stored && resolveTranslationLanguageCode(stored)) || initialTargetLanguage
   })
-  const [enableTranscription, setEnableTranscription] = useState(false)
+  const [noiseReduction, setNoiseReduction] = useState<NoiseReductionMode>(() => {
+    const stored = localStorage.getItem(`ai_translate_${sessionKey}_noise_reduction`)
+    return (stored && resolveNoiseReductionMode(stored)) || initialNoiseReduction
+  })
+  const [browserDspEnabled, setBrowserDspEnabled] = useState<boolean>(() => {
+    const stored = localStorage.getItem(`ai_translate_${sessionKey}_browser_dsp`)
+    return stored === 'true' ? true : stored === 'false' ? false : initialBrowserDsp
+  })
   const [status, setStatus] = useState<TranslationStatus>('idle')
   const [error, setError] = useState('')
-  const [transcript, setTranscript] = useState<TranscriptState>({
-    source: '',
-    target: '',
-  })
 
-  // Update device IDs when better defaults appear or current selections disappear.
-  useEffect(() => {
-    let updateTimeout: number | undefined
-    const currentInputExists = inputDevices.some(device => device.deviceId === inputDeviceId)
-    const shouldUseInitialInput =
-      inputDevices.length > 0 &&
-      initialInputDeviceId &&
-      (!inputDeviceId ||
-        !currentInputExists ||
-        (!hasManualInputSelection.current && inputDeviceId !== initialInputDeviceId))
-
-    if (shouldUseInitialInput) {
-      updateTimeout = window.setTimeout(() => {
-        setInputDeviceId(initialInputDeviceId)
-      }, 0)
-    }
-
-    return () => {
-      if (updateTimeout) {
-        window.clearTimeout(updateTimeout)
-      }
-    }
-  }, [initialInputDeviceId, inputDevices, inputDeviceId])
-
-  useEffect(() => {
-    let updateTimeout: number | undefined
-    const currentOutputExists = outputDevices.some(device => device.deviceId === outputDeviceId)
-    const shouldUseInitialOutput =
-      outputDevices.length > 0 &&
-      initialOutputDeviceId &&
-      (!outputDeviceId ||
-        !currentOutputExists ||
-        (!hasManualOutputSelection.current && outputDeviceId !== initialOutputDeviceId))
-
-    if (shouldUseInitialOutput) {
-      updateTimeout = window.setTimeout(() => {
-        setOutputDeviceId(initialOutputDeviceId)
-      }, 0)
-    }
-
-    return () => {
-      if (updateTimeout) {
-        window.clearTimeout(updateTimeout)
-      }
-    }
-  }, [initialOutputDeviceId, outputDevices, outputDeviceId])
+  const inputDeviceId = inputDevices.some(device => device.deviceId === selectedInputDeviceId)
+    ? selectedInputDeviceId
+    : initialInputDeviceId
+  const outputDeviceId = outputDevices.some(device => device.deviceId === selectedOutputDeviceId)
+    ? selectedOutputDeviceId
+    : initialOutputDeviceId
 
   function handleInputDeviceChange(deviceId: string): void {
-    hasManualInputSelection.current = true
-    setInputDeviceId(deviceId)
+    setSelectedInputDeviceId(deviceId)
+    localStorage.setItem(`ai_translate_${sessionKey}_input`, deviceId)
   }
 
   function handleOutputDeviceChange(deviceId: string): void {
-    hasManualOutputSelection.current = true
-    setOutputDeviceId(deviceId)
+    setSelectedOutputDeviceId(deviceId)
+    localStorage.setItem(`ai_translate_${sessionKey}_output`, deviceId)
   }
 
   function handleTargetLanguageChange(language: string): void {
@@ -155,109 +113,90 @@ export function TranslationSession({
 
     if (resolvedLanguage) {
       setTargetLanguage(resolvedLanguage)
+      localStorage.setItem(`ai_translate_${sessionKey}_target_language`, resolvedLanguage)
     }
   }
 
-  // Persist selections to localStorage
-  useEffect(() => {
-    if (inputDeviceId) {
-      localStorage.setItem(`ai_translate_${sessionKey}_input`, inputDeviceId)
-    }
-  }, [inputDeviceId, sessionKey])
+  function handleNoiseReductionChange(mode: string): void {
+    const resolvedMode = resolveNoiseReductionMode(mode)
 
-  useEffect(() => {
-    if (outputDeviceId) {
-      localStorage.setItem(`ai_translate_${sessionKey}_output`, outputDeviceId)
-    }
-  }, [outputDeviceId, sessionKey])
-
-  useEffect(() => {
-    localStorage.setItem(`ai_translate_${sessionKey}_target_language`, targetLanguage)
-  }, [sessionKey, targetLanguage])
-
-  function resetTranscriptBuffer(): void {
-    pendingTranscript.current = { source: '', target: '' }
-
-    if (transcriptFlushFrame.current !== undefined) {
-      window.cancelAnimationFrame(transcriptFlushFrame.current)
-      transcriptFlushFrame.current = undefined
+    if (resolvedMode) {
+      setNoiseReduction(resolvedMode)
+      localStorage.setItem(`ai_translate_${sessionKey}_noise_reduction`, resolvedMode)
     }
   }
 
-  function flushTranscript(): void {
-    transcriptFlushFrame.current = undefined
-
-    const queuedTranscript = pendingTranscript.current
-    pendingTranscript.current = { source: '', target: '' }
-
-    if (!queuedTranscript.source && !queuedTranscript.target) {
-      return
-    }
-
-    setTranscript(currentTranscript => ({
-      source: `${currentTranscript.source}${queuedTranscript.source}`,
-      target: `${currentTranscript.target}${queuedTranscript.target}`,
-    }))
+  function handleBrowserDspChange(enabled: boolean): void {
+    setBrowserDspEnabled(enabled)
+    localStorage.setItem(`ai_translate_${sessionKey}_browser_dsp`, String(enabled))
   }
 
-  function handleTranscript(event: TranslationTranscriptEvent): void {
-    if (!enableTranscription) {
-      return
-    }
-
-    pendingTranscript.current = {
-      ...pendingTranscript.current,
-      [event.kind]: `${pendingTranscript.current[event.kind]}${event.text}`,
-    }
-
-    if (transcriptFlushFrame.current === undefined) {
-      transcriptFlushFrame.current = window.requestAnimationFrame(flushTranscript)
-    }
+  function stop(): void {
+    startAbortController.current?.abort()
+    startAbortController.current = undefined
+    activeSession.current?.stop()
+    activeSession.current = undefined
+    setStatus('idle')
   }
 
   async function start(): Promise<void> {
     setError('')
-    resetTranscriptBuffer()
-    setTranscript({ source: '', target: '' })
-
+    startAbortController.current?.abort()
     activeSession.current?.stop()
     activeSession.current = undefined
 
+    const controller = new AbortController()
+    startAbortController.current = controller
+
     try {
-      activeSession.current = await startTranslationSession({
+      const session = await startTranslationSession({
         inputDeviceId,
         outputDeviceId,
         targetLanguage,
-        transcriptionLanguage,
-        enableTranscription,
-        disableAudioDSP: disableAudioDSP ?? false,
+        noiseReduction,
+        disableAudioDSP: !browserDspEnabled,
+        signal: controller.signal,
         callbacks: {
-          onStatusChange: setStatus,
-          onTranscript: handleTranscript,
-          onError: setError,
+          onStatusChange: nextStatus => {
+            if (!controller.signal.aborted) {
+              setStatus(nextStatus)
+            }
+          },
+          onError: message => {
+            if (!controller.signal.aborted) {
+              setError(message)
+            }
+          },
           onClosed: () => {
             activeSession.current = undefined
           },
         },
       })
-    } catch (caughtError) {
-      activeSession.current?.stop()
-      activeSession.current = undefined
-      setStatus('error')
-      setError(caughtError instanceof Error ? caughtError.message : 'Falha ao iniciar traducao.')
-    }
-  }
 
-  function stop(): void {
-    activeSession.current?.stop()
-    activeSession.current = undefined
+      if (controller.signal.aborted) {
+        session.stop()
+        return
+      }
+
+      activeSession.current = session
+    } catch (caughtError) {
+      if (controller.signal.aborted) {
+        return
+      }
+
+      setStatus('error')
+      setError(caughtError instanceof Error ? caughtError.message : 'Falha ao iniciar tradução.')
+    } finally {
+      if (startAbortController.current === controller) {
+        startAbortController.current = undefined
+      }
+    }
   }
 
   useEffect(() => {
     return () => {
-      resetTranscriptBuffer()
-      // Ensure we close the connection if the component unmounts
-      stop()
+      startAbortController.current?.abort()
+      activeSession.current?.stop()
     }
   }, [])
 
@@ -266,14 +205,8 @@ export function TranslationSession({
 
   return (
     <div className='translation-session'>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1rem',
-        }}>
-        <h2 style={{ margin: 0, fontSize: '1.25rem' }}>{title}</h2>
+      <div className='session-header'>
+        <h2 className='session-title'>{title}</h2>
         <div
           className='status-badge'
           data-state={status}>
@@ -283,7 +216,7 @@ export function TranslationSession({
 
       <section
         className='control-grid'
-        aria-label='Controles de traducao'>
+        aria-label='Controles de tradução'>
         <div className='control-panel'>
           <label htmlFor={`target-language-${sessionKey}`}>{targetLanguageLabel}</label>
           <select
@@ -302,9 +235,26 @@ export function TranslationSession({
         </div>
 
         <div className='control-panel'>
-          <label htmlFor={`input-device-${title}`}>{inputLabel}</label>
+          <label htmlFor={`noise-reduction-${sessionKey}`}>Redução de ruído (OpenAI)</label>
           <select
-            id={`input-device-${title}`}
+            id={`noise-reduction-${sessionKey}`}
+            value={noiseReduction}
+            onChange={event => handleNoiseReductionChange(event.target.value)}
+            disabled={isRunning}>
+            {NOISE_REDUCTION_OPTIONS.map(option => (
+              <option
+                key={option.value}
+                value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className='control-panel'>
+          <label htmlFor={`input-device-${sessionKey}`}>{inputLabel}</label>
+          <select
+            id={`input-device-${sessionKey}`}
             value={inputDeviceId}
             onChange={event => handleInputDeviceChange(event.target.value)}
             disabled={isRunning}>
@@ -319,9 +269,9 @@ export function TranslationSession({
         </div>
 
         <div className='control-panel'>
-          <label htmlFor={`output-device-${title}`}>{outputLabel}</label>
+          <label htmlFor={`output-device-${sessionKey}`}>{outputLabel}</label>
           <select
-            id={`output-device-${title}`}
+            id={`output-device-${sessionKey}`}
             value={outputDeviceId}
             onChange={event => handleOutputDeviceChange(event.target.value)}
             disabled={isRunning}>
@@ -329,34 +279,27 @@ export function TranslationSession({
               <option
                 key={device.deviceId || index}
                 value={device.deviceId}>
-                {formatDeviceLabel(device, `Saida ${index + 1}`)}
+                {formatDeviceLabel(device, `Saída ${index + 1}`)}
               </option>
             ))}
           </select>
         </div>
 
-        <div
-          className='control-panel compact'
-          style={{ alignSelf: 'center' }}>
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              cursor: 'pointer',
-            }}>
+        <div className='control-panel compact'>
+          <label className='checkbox-label'>
             <input
               type='checkbox'
-              checked={enableTranscription}
-              onChange={e => setEnableTranscription(e.target.checked)}
+              checked={browserDspEnabled}
+              onChange={event => handleBrowserDspChange(event.target.checked)}
               disabled={isRunning}
             />
-            Gerar legendas de texto
+            DSP do navegador (AEC / NS / AGC)
           </label>
         </div>
+
         <div
-          className='actions'
-          aria-label='Acoes'>
+          className='actions session-actions'
+          aria-label='Ações'>
           <button
             type='button'
             className='primary-button'
@@ -377,27 +320,6 @@ export function TranslationSession({
       </section>
 
       {error && <p className='error-message'>{error}</p>}
-
-      <section
-        className='transcript-grid'
-        aria-label='Legendas'>
-        <article>
-          <h2>Original</h2>
-          {enableTranscription ? (
-            <p>{transcript.source || 'Aguardando...'}</p>
-          ) : (
-            <p style={{ fontStyle: 'italic', opacity: 0.7 }}>Legendas desabilitadas. Audio traduzido continua ativo.</p>
-          )}
-        </article>
-        <article>
-          <h2>Traducao</h2>
-          {enableTranscription ? (
-            <p>{transcript.target || 'Aguardando...'}</p>
-          ) : (
-            <p style={{ fontStyle: 'italic', opacity: 0.7 }}>Legendas desabilitadas. Audio traduzido continua ativo.</p>
-          )}
-        </article>
-      </section>
     </div>
   )
 }

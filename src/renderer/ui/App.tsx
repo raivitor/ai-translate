@@ -1,77 +1,24 @@
 import { useEffect, useMemo, useState } from 'react'
 
+import { selectDefaultAudioDevices } from '../../shared/deviceSelection.js'
 import type { TranslationLanguageCode } from '../../shared/translationLanguages.js'
 import { ApiKeySettings } from './ApiKeySettings.js'
 import { TranslationSession } from './TranslationSession.js'
 
 const DEFAULT_OUTBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'en'
 const DEFAULT_INBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'pt'
-const OUTBOUND_TRANSCRIPTION_LANGUAGE: TranslationLanguageCode = 'pt'
-const INBOUND_TRANSCRIPTION_LANGUAGE: TranslationLanguageCode = 'en'
-
-function normalizeDeviceLabel(device: MediaDeviceInfo): string {
-  return device.label.toLowerCase().replaceAll(/[\s_]+/g, '-')
-}
-
-function isVirtualCableDevice(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = device.label.toLowerCase()
-
-  return (
-    normalizedLabel.includes('cable') || normalizedLabel.includes('voicemeeter') || normalizedLabel.includes('vb-audio')
-  )
-}
-
-function isAiTranslateDevice(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = normalizeDeviceLabel(device)
-
-  return normalizedLabel.includes('ai-translate')
-}
-
-function isAiTranslateToMeetOutput(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = normalizeDeviceLabel(device)
-
-  return normalizedLabel.includes('ai-translate-to-meet') || normalizedLabel.includes('ai-translate-to-meet-sink')
-}
-
-function isAiTranslateFromMeetInput(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = normalizeDeviceLabel(device)
-
-  return (
-    normalizedLabel.includes('ai-translate-meet-audio-capture') ||
-    normalizedLabel.includes('ai-translate-from-meet-capture')
-  )
-}
-
-function isAiTranslateFromMeetOutput(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = normalizeDeviceLabel(device)
-
-  return normalizedLabel.includes('ai-translate-from-meet') || normalizedLabel.includes('ai-translate-from-meet-sink')
-}
-
-function isHeadphones(device: MediaDeviceInfo): boolean {
-  const normalizedLabel = device.label.toLowerCase()
-
-  return (
-    normalizedLabel.includes('headphone') ||
-    normalizedLabel.includes('fones') ||
-    normalizedLabel.includes('earbud') ||
-    normalizedLabel.includes('headset')
-  )
-}
 
 export function App() {
   const aiTranslate = window.aiTranslate
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
-  const [error, setError] = useState('')
-  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(null)
+  const [error, setError] = useState(() =>
+    aiTranslate ? '' : 'A ponte do Electron não foi carregada. Reinicie o app depois de executar o build.',
+  )
+  const [apiKeyConfigured, setApiKeyConfigured] = useState<boolean | null>(() => (aiTranslate ? null : false))
   const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     if (!aiTranslate) {
-      void Promise.resolve().then(() => {
-        setError('A ponte do Electron nao foi carregada. Reinicie o app depois de executar o build.')
-        setApiKeyConfigured(false)
-      })
       return
     }
 
@@ -81,7 +28,7 @@ export function App() {
         setApiKeyConfigured(configured)
       })
       .catch(caughtError => {
-        setError(caughtError instanceof Error ? caughtError.message : 'Nao foi possivel verificar a chave da OpenAI.')
+        setError(caughtError instanceof Error ? caughtError.message : 'Não foi possível verificar a chave da OpenAI.')
         setApiKeyConfigured(false)
       })
   }, [aiTranslate])
@@ -89,26 +36,10 @@ export function App() {
   const inputDevices = useMemo(() => devices.filter(device => device.kind === 'audioinput'), [devices])
   const outputDevices = useMemo(() => devices.filter(device => device.kind === 'audiooutput'), [devices])
 
-  const physicalInput = inputDevices.find(device => !isAiTranslateDevice(device) && !isVirtualCableDevice(device))
-  const defaultOutboundInputId = physicalInput?.deviceId || inputDevices[0]?.deviceId || ''
-  const virtualCableOutput = outputDevices.find(isAiTranslateToMeetOutput) || outputDevices.find(isVirtualCableDevice)
-  const defaultOutboundOutputId = virtualCableOutput?.deviceId || outputDevices[0]?.deviceId || ''
-
-  const virtualCableInput = inputDevices.find(isAiTranslateFromMeetInput) || inputDevices.find(isVirtualCableDevice)
-  const defaultInboundInputId = virtualCableInput?.deviceId || inputDevices[0]?.deviceId || ''
-
-  const headphonesOutput = outputDevices.find(isHeadphones)
-  const defaultInboundOutputId =
-    headphonesOutput?.deviceId ||
-    outputDevices.find(device => device.deviceId !== defaultOutboundOutputId && !isAiTranslateFromMeetOutput(device))
-      ?.deviceId ||
-    outputDevices[0]?.deviceId ||
-    ''
-
-  async function refreshDevices(): Promise<void> {
-    const availableDevices = await navigator.mediaDevices.enumerateDevices()
-    setDevices(availableDevices)
-  }
+  const defaultDevices = useMemo(
+    () => selectDefaultAudioDevices(inputDevices, outputDevices),
+    [inputDevices, outputDevices],
+  )
 
   async function requestDeviceAccess(): Promise<void> {
     try {
@@ -122,24 +53,27 @@ export function App() {
         track.stop()
       }
 
-      await refreshDevices()
+      setDevices(await navigator.mediaDevices.enumerateDevices())
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Nao foi possivel liberar os dispositivos.')
+      setError(caughtError instanceof Error ? caughtError.message : 'Não foi possível liberar os dispositivos.')
     }
   }
 
   useEffect(() => {
-    const refreshTimeout = window.setTimeout(() => {
-      void refreshDevices().catch(() => {
-        setError('Nao foi possivel listar dispositivos de audio.')
-      })
-    }, 0)
+    const loadDevices = (): void => {
+      void navigator.mediaDevices
+        .enumerateDevices()
+        .then(setDevices)
+        .catch(() => {
+          setError('Não foi possível listar dispositivos de áudio.')
+        })
+    }
 
-    navigator.mediaDevices.addEventListener('devicechange', refreshDevices)
+    loadDevices()
+    navigator.mediaDevices.addEventListener('devicechange', loadDevices)
 
     return () => {
-      window.clearTimeout(refreshTimeout)
-      navigator.mediaDevices.removeEventListener('devicechange', refreshDevices)
+      navigator.mediaDevices.removeEventListener('devicechange', loadDevices)
     }
   }, [])
 
@@ -186,14 +120,13 @@ export function App() {
         </>
       )}
 
-      {apiKeyConfigured === null && <p className='settings-description'>Carregando configuracoes...</p>}
+      {apiKeyConfigured === null && <p className='settings-description'>Carregando configurações...</p>}
 
       {apiKeyConfigured === true && !showSettings && (
         <>
           <section
-            className='actions'
-            aria-label='Acoes globais'
-            style={{ marginBottom: '2rem' }}>
+            className='actions global-actions'
+            aria-label='Ações globais'>
             <button
               type='button'
               className='secondary-button'
@@ -211,37 +144,32 @@ export function App() {
               sessionKey='outbound'
               title='Outbound (sua fala)'
               initialTargetLanguage={DEFAULT_OUTBOUND_TARGET_LANGUAGE}
-              transcriptionLanguage={OUTBOUND_TRANSCRIPTION_LANGUAGE}
+              initialNoiseReduction='near_field'
+              initialBrowserDsp={false}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
-              initialInputDeviceId={defaultOutboundInputId}
-              initialOutputDeviceId={defaultOutboundOutputId}
+              initialInputDeviceId={defaultDevices.outboundInputId}
+              initialOutputDeviceId={defaultDevices.outboundOutputId}
               targetLanguageLabel='Traduzir minha fala para'
-              inputLabel='Seu microfone físico'
+              inputLabel='Seu microfone físico (HyperX Cloud III)'
               outputLabel='Saída para o Meet (AI-Translate-To-Meet)'
-              disableAudioDSP={true}
             />
 
             <TranslationSession
               sessionKey='inbound'
               title='Inbound (áudio do Meet)'
               initialTargetLanguage={DEFAULT_INBOUND_TARGET_LANGUAGE}
-              transcriptionLanguage={INBOUND_TRANSCRIPTION_LANGUAGE}
+              initialNoiseReduction='off'
+              initialBrowserDsp={false}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
-              initialInputDeviceId={defaultInboundInputId}
-              initialOutputDeviceId={defaultInboundOutputId}
+              initialInputDeviceId={defaultDevices.inboundInputId}
+              initialOutputDeviceId={defaultDevices.inboundOutputId}
               targetLanguageLabel='Quero ouvir em'
               inputLabel='Áudio do Meet (AI-Translate-Meet-Audio-Capture)'
-              outputLabel='Seus fones de ouvido'
-              disableAudioDSP={true}
+              outputLabel='Seus fones de ouvido (HyperX Cloud III)'
             />
           </div>
-
-          <section
-            className='runtime-strip'
-            aria-label='Ambiente'
-            style={{ marginTop: '2rem' }}></section>
         </>
       )}
     </main>

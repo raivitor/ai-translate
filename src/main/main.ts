@@ -1,28 +1,89 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron'
+import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { clearApiKey, hasApiKey, loadApiKey, saveApiKey } from './apiKeyStore.js'
 import { createClientSecret } from './openaiRealtimeHandler.js'
+import {
+  isAllowedPermissionOrigin,
+  isAllowedRendererUrl,
+  validateApiKeyInput,
+  validateCreateClientSecretParams,
+  type RendererSecurityConfig,
+} from './security.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDevelopment = process.env.NODE_ENV === 'development'
 const rendererDevUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
+const rendererIndexPath = path.join(__dirname, '../renderer/index.html')
 
-let mainWindow: BrowserWindow | undefined
+const securityConfig: RendererSecurityConfig = {
+  isDevelopment,
+  rendererDevUrl,
+  rendererIndexPath,
+}
+
+const DEV_LOAD_MAX_ATTEMPTS = 5
+const DEV_LOAD_RETRY_DELAY_MS = 250
+
+function assertTrustedSender(event: IpcMainInvokeEvent): void {
+  const senderUrl = event.senderFrame?.url ?? event.sender.getURL()
+
+  if (!isAllowedRendererUrl(senderUrl, securityConfig)) {
+    throw new Error('Unauthorized IPC sender.')
+  }
+}
 
 function configureMediaPermissions(): void {
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media')
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const allowed =
+      permission === 'media' && isAllowedPermissionOrigin(webContents.getURL(), details.requestingUrl, securityConfig)
+    callback(allowed)
   })
 
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media'
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    if (permission !== 'media' || !webContents) {
+      return false
+    }
+
+    return isAllowedPermissionOrigin(webContents.getURL(), requestingOrigin, securityConfig)
   })
 }
 
+async function delay(ms: number): Promise<void> {
+  await new Promise(resolve => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function loadRendererDevUrl(window: BrowserWindow, url: string): Promise<void> {
+  for (let attempt = 1; attempt <= DEV_LOAD_MAX_ATTEMPTS; attempt += 1) {
+    if (window.isDestroyed()) {
+      return
+    }
+
+    try {
+      await window.loadURL(url)
+      if (!window.isDestroyed()) {
+        window.webContents.openDevTools({ mode: 'detach' })
+      }
+      return
+    } catch (error) {
+      const errorCode =
+        typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : ''
+
+      if (errorCode !== 'ERR_CONNECTION_REFUSED' || attempt === DEV_LOAD_MAX_ATTEMPTS) {
+        console.error('Failed to load renderer URL:', error)
+        return
+      }
+
+      await delay(DEV_LOAD_RETRY_DELAY_MS)
+    }
+  }
+}
+
 async function createMainWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1100,
     height: 760,
     minWidth: 900,
@@ -48,82 +109,69 @@ async function createMainWindow(): Promise<void> {
   }
 
   const revealMainWindow = (): void => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      clearRevealTimeout()
-      return
+    clearRevealTimeout()
+    if (!window.isDestroyed() && !window.isVisible()) {
+      window.show()
+      window.focus()
     }
-
-    if (mainWindow.isVisible()) {
-      clearRevealTimeout()
-      return
-    }
-
-    mainWindow.show()
-    mainWindow.focus()
   }
 
-  mainWindow.on('closed', () => {
-    clearRevealTimeout()
-    mainWindow = undefined
+  window.on('closed', clearRevealTimeout)
+
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event, navigationUrl) => {
+    if (!isAllowedRendererUrl(navigationUrl, securityConfig)) {
+      event.preventDefault()
+    }
   })
 
-  mainWindow.once('ready-to-show', revealMainWindow)
-  mainWindow.webContents.once('did-finish-load', revealMainWindow)
+  window.once('ready-to-show', revealMainWindow)
+  window.webContents.once('did-finish-load', revealMainWindow)
   revealTimeout = setTimeout(revealMainWindow, 3000)
 
-  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
     console.error(`Renderer failed to load: ${errorCode} ${errorDescription}`)
   })
 
   if (isDevelopment) {
-    // Wait a bit for vite to start before loading
-    setTimeout(async () => {
-      try {
-        await mainWindow!.loadURL(rendererDevUrl)
-        mainWindow!.webContents.openDevTools({ mode: 'detach' })
-      } catch (err) {
-        console.error('Failed to load renderer URL:', err)
-      }
-    }, 2000)
+    await loadRendererDevUrl(window, rendererDevUrl)
     return
   }
 
-  await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+  await window.loadFile(rendererIndexPath)
 }
 
 app.whenReady().then(async () => {
-  ipcMain.handle('aiTranslate:setApiKey', (_event, key: string) => {
-    saveApiKey(key)
+  ipcMain.handle('aiTranslate:setApiKey', (event, rawKey: unknown) => {
+    assertTrustedSender(event)
+    saveApiKey(validateApiKeyInput(rawKey))
   })
 
-  ipcMain.handle('aiTranslate:hasApiKey', () => {
+  ipcMain.handle('aiTranslate:hasApiKey', event => {
+    assertTrustedSender(event)
     return hasApiKey()
   })
 
-  ipcMain.handle('aiTranslate:clearApiKey', () => {
+  ipcMain.handle('aiTranslate:clearApiKey', event => {
+    assertTrustedSender(event)
     clearApiKey()
   })
 
-  ipcMain.handle(
-    'aiTranslate:createClientSecret',
-    async (
-      _event,
-      params: { targetLanguage: string; enableTranscription?: boolean; transcriptionLanguage?: string },
-    ) => {
-      const apiKey = loadApiKey()
+  ipcMain.handle('aiTranslate:createClientSecret', async (event, rawParams: unknown) => {
+    assertTrustedSender(event)
+    const validatedParams = validateCreateClientSecretParams(rawParams)
+    const apiKey = loadApiKey()
 
-      if (!apiKey) {
-        throw new Error('OPENAI_API_KEY is not configured. Please set it in Settings.')
-      }
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY is not configured. Please set it in Settings.')
+    }
 
-      return createClientSecret({
-        targetLanguage: params.targetLanguage,
-        enableTranscription: params.enableTranscription,
-        transcriptionLanguage: params.transcriptionLanguage,
-        apiKey,
-      })
-    },
-  )
+    return createClientSecret({
+      targetLanguage: validatedParams.targetLanguage,
+      noiseReduction: validatedParams.noiseReduction,
+      apiKey,
+    })
+  })
 
   configureMediaPermissions()
   await createMainWindow()

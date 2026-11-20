@@ -1,13 +1,9 @@
-export type TranslationStatus = 'idle' | 'requesting-media' | 'connecting' | 'connected' | 'stopping' | 'error'
+import type { NoiseReductionMode } from '../../shared/realtimeAudioConfig.js'
 
-export type TranslationTranscriptEvent = {
-  kind: 'source' | 'target'
-  text: string
-}
+export type TranslationStatus = 'idle' | 'requesting-media' | 'connecting' | 'connected' | 'stopping' | 'error'
 
 export type TranslationSessionCallbacks = {
   onStatusChange: (status: TranslationStatus) => void
-  onTranscript: (event: TranslationTranscriptEvent) => void
   onError?: (message: string) => void
   onClosed?: () => void
 }
@@ -16,17 +12,19 @@ export type StartTranslationSessionOptions = {
   inputDeviceId: string
   outputDeviceId: string
   targetLanguage: string
-  transcriptionLanguage?: string | undefined
-  enableTranscription?: boolean
+  noiseReduction?: NoiseReductionMode
   disableAudioDSP?: boolean
+  signal?: AbortSignal
   callbacks: TranslationSessionCallbacks
 }
 
 type RealtimeServerEvent = {
   type?: unknown
-  delta?: unknown
-  transcript?: unknown
   error?: unknown
+}
+
+type AudioContextOptionsWithSinkId = AudioContextOptions & {
+  sinkId?: string
 }
 
 type AudioContextWithSinkId = AudioContext & {
@@ -77,43 +75,6 @@ export type ActiveTranslationSession = {
   stop: () => void
 }
 
-async function createTranslationClientSecret(
-  targetLanguage: string,
-  enableTranscription?: boolean,
-  transcriptionLanguage?: string,
-): Promise<string> {
-  const result = await window.aiTranslate!.createClientSecret({
-    targetLanguage,
-    enableTranscription,
-    transcriptionLanguage,
-  })
-
-  return result.value
-}
-
-function parseRealtimeEvent(rawData: string): RealtimeServerEvent | undefined {
-  try {
-    return JSON.parse(rawData) as RealtimeServerEvent
-  } catch {
-    return undefined
-  }
-}
-
-function shouldParseRealtimeEvent(rawData: string, enableTranscription: boolean): boolean {
-  return (
-    enableTranscription ||
-    rawData.includes('"error"') ||
-    rawData.includes('"type":"error"') ||
-    rawData.includes('"type": "error"')
-  )
-}
-
-function readStringProperty(value: Record<string, unknown>, property: string): string | undefined {
-  const rawProperty = value[property]
-
-  return typeof rawProperty === 'string' ? rawProperty : undefined
-}
-
 function getRealtimeErrorMessage(realtimeEvent: RealtimeServerEvent): string | undefined {
   if (realtimeEvent.type !== 'error') {
     return undefined
@@ -125,8 +86,8 @@ function getRealtimeErrorMessage(realtimeEvent: RealtimeServerEvent): string | u
 
   if (typeof realtimeEvent.error === 'object' && realtimeEvent.error !== null && !Array.isArray(realtimeEvent.error)) {
     const errorRecord = realtimeEvent.error as Record<string, unknown>
-    const message = readStringProperty(errorRecord, 'message')
-    const code = readStringProperty(errorRecord, 'code')
+    const message = typeof errorRecord.message === 'string' ? errorRecord.message : undefined
+    const code = typeof errorRecord.code === 'string' ? errorRecord.code : undefined
 
     return message ?? code ?? 'OpenAI Realtime returned an error event.'
   }
@@ -134,42 +95,11 @@ function getRealtimeErrorMessage(realtimeEvent: RealtimeServerEvent): string | u
   return 'OpenAI Realtime returned an error event.'
 }
 
-function isSourceTranscriptDelta(type: unknown): boolean {
-  return type === 'session.input_transcript.delta' || type === 'conversation.item.input_audio_transcription.delta'
-}
-
-function isTargetTranscriptDelta(type: unknown): boolean {
-  return (
-    type === 'session.output_transcript.delta' ||
-    type === 'response.audio_transcript.delta' ||
-    type === 'response.output_audio_transcript.delta'
-  )
-}
-
-function isSourceTranscriptCompleted(type: unknown): boolean {
-  return (
-    type === 'session.input_transcript.completed' || type === 'conversation.item.input_audio_transcription.completed'
-  )
-}
-
-function isTargetTranscriptCompleted(type: unknown): boolean {
-  return (
-    type === 'session.output_transcript.completed' ||
-    type === 'response.audio_transcript.done' ||
-    type === 'response.output_audio_transcript.done'
-  )
-}
-
 function addDataChannelListeners(
   dataChannel: RTCDataChannel,
-  callbacks: TranslationSessionCallbacks,
-  enableTranscription: boolean,
   latencyLogger: LatencyLogger,
   closeWithError: (message: string) => void,
 ): void {
-  let sourceTranscriptHasDelta = false
-  let targetTranscriptHasDelta = false
-
   dataChannel.addEventListener('open', () => {
     latencyLogger.mark('data channel open')
   })
@@ -179,70 +109,28 @@ function addDataChannelListeners(
   })
 
   dataChannel.addEventListener('message', event => {
-    if (typeof event.data !== 'string') {
+    if (typeof event.data !== 'string' || !event.data.includes('error')) {
       return
     }
 
-    if (!shouldParseRealtimeEvent(event.data, enableTranscription)) {
-      return
-    }
+    try {
+      const realtimeEvent = JSON.parse(event.data) as RealtimeServerEvent
+      const errorMessage = getRealtimeErrorMessage(realtimeEvent)
 
-    const realtimeEvent = parseRealtimeEvent(event.data)
-
-    if (!realtimeEvent) {
-      return
-    }
-
-    const errorMessage = getRealtimeErrorMessage(realtimeEvent)
-
-    if (errorMessage) {
-      closeWithError(errorMessage)
-      return
-    }
-
-    if (!enableTranscription) {
-      return
-    }
-
-    if (isSourceTranscriptDelta(realtimeEvent.type) && typeof realtimeEvent.delta === 'string') {
-      sourceTranscriptHasDelta = true
-      latencyLogger.markOnce('first transcript')
-      callbacks.onTranscript({ kind: 'source', text: realtimeEvent.delta })
-    }
-
-    if (isTargetTranscriptDelta(realtimeEvent.type) && typeof realtimeEvent.delta === 'string') {
-      targetTranscriptHasDelta = true
-      latencyLogger.markOnce('first transcript')
-      callbacks.onTranscript({ kind: 'target', text: realtimeEvent.delta })
-    }
-
-    if (isSourceTranscriptCompleted(realtimeEvent.type) && typeof realtimeEvent.transcript === 'string') {
-      callbacks.onTranscript({
-        kind: 'source',
-        text: sourceTranscriptHasDelta ? '\n' : `${realtimeEvent.transcript}\n`,
-      })
-      sourceTranscriptHasDelta = false
-    }
-
-    if (isTargetTranscriptCompleted(realtimeEvent.type) && typeof realtimeEvent.transcript === 'string') {
-      callbacks.onTranscript({
-        kind: 'target',
-        text: targetTranscriptHasDelta ? '\n' : `${realtimeEvent.transcript}\n`,
-      })
-      targetTranscriptHasDelta = false
+      if (errorMessage) {
+        closeWithError(errorMessage)
+      }
+    } catch {
+      // Ignore malformed server events.
     }
   })
 }
 
 async function getErrorResponseMessage(response: Response): Promise<string> {
-  const responseBody = await response.text().catch(() => '')
-  const trimmedBody = responseBody.trim()
+  const trimmedBody = (await response.text().catch(() => '')).trim()
+  const statusLine = `HTTP ${response.status} ${response.statusText}`.trim()
 
-  if (!trimmedBody) {
-    return `HTTP ${response.status} ${response.statusText}`.trim()
-  }
-
-  return `HTTP ${response.status} ${response.statusText}: ${trimmedBody}`.trim()
+  return trimmedBody ? `${statusLine}: ${trimmedBody}` : statusLine
 }
 
 function stopStream(stream: MediaStream): void {
@@ -251,9 +139,29 @@ function stopStream(stream: MediaStream): void {
   }
 }
 
-function closeDataChannel(dataChannel: RTCDataChannel): void {
-  if (dataChannel.readyState !== 'closed') {
-    dataChannel.close()
+async function createOutputAudioContext(outputDeviceId: string): Promise<AudioContextWithSinkId | undefined> {
+  let ctx: AudioContextWithSinkId
+
+  try {
+    ctx = new AudioContext({
+      latencyHint: 'interactive',
+      sinkId: outputDeviceId,
+    } as AudioContextOptionsWithSinkId) as AudioContextWithSinkId
+  } catch {
+    ctx = new AudioContext({ latencyHint: 'interactive' }) as AudioContextWithSinkId
+  }
+
+  if (!ctx.setSinkId) {
+    void ctx.close().catch(() => undefined)
+    return undefined
+  }
+
+  try {
+    await ctx.setSinkId(outputDeviceId)
+    return ctx
+  } catch {
+    void ctx.close().catch(() => undefined)
+    return undefined
   }
 }
 
@@ -261,39 +169,39 @@ export async function startTranslationSession({
   inputDeviceId,
   outputDeviceId,
   targetLanguage,
-  transcriptionLanguage,
-  enableTranscription,
+  noiseReduction,
   disableAudioDSP,
+  signal,
   callbacks,
 }: StartTranslationSessionOptions): Promise<ActiveTranslationSession> {
+  if (signal?.aborted) {
+    return { stop: () => undefined }
+  }
+
+  if (!window.aiTranslate) {
+    throw new Error('Electron bridge is not available.')
+  }
+
   const latencyLogger = createLatencyLogger()
   latencyLogger.mark('start')
   callbacks.onStatusChange('requesting-media')
 
-  const audioConstraints: MediaTrackConstraints = disableAudioDSP
-    ? {
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
-      }
-    : {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      }
-
-  if (inputDeviceId) {
-    audioConstraints.deviceId = { exact: inputDeviceId }
+  const audioConstraints: MediaTrackConstraints = {
+    echoCancellation: !disableAudioDSP,
+    noiseSuppression: !disableAudioDSP,
+    autoGainControl: !disableAudioDSP,
+    ...(inputDeviceId ? { deviceId: { exact: inputDeviceId } } : {}),
   }
 
   let inputStream: MediaStream | undefined
   let peerConnection: RTCPeerConnection | undefined
   let dataChannel: RTCDataChannel | undefined
   let audioContext: AudioContextWithSinkId | undefined
+  let remoteAudioSource: MediaStreamAudioSourceNode | undefined
   let isClosed = false
   const audioElement = document.createElement('audio') as SinkSelectableAudioElement
   audioElement.controls = false
-  audioElement.style.display = 'none'
+  audioElement.hidden = true
   audioElement.autoplay = true
   audioElement.volume = 1
 
@@ -302,25 +210,16 @@ export async function startTranslationSession({
   })
 
   const inputStreamPromise = navigator.mediaDevices
-    .getUserMedia({
-      audio: audioConstraints,
-      video: false,
-    })
+    .getUserMedia({ audio: audioConstraints, video: false })
     .then(stream => {
       inputStream = stream
       latencyLogger.mark('media captured')
-
       return stream
     })
 
-  const clientSecretPromise = createTranslationClientSecret(
-    targetLanguage,
-    enableTranscription,
-    transcriptionLanguage,
-  ).then(clientSecret => {
+  const clientSecretPromise = window.aiTranslate.createClientSecret({ targetLanguage, noiseReduction }).then(result => {
     latencyLogger.mark('client secret received')
-
-    return clientSecret
+    return result.value
   })
 
   function closeSession(): void {
@@ -329,15 +228,24 @@ export async function startTranslationSession({
     }
 
     isClosed = true
+    signal?.removeEventListener('abort', closeSession)
 
-    if (dataChannel) {
-      closeDataChannel(dataChannel)
+    if (dataChannel && dataChannel.readyState !== 'closed') {
+      dataChannel.close()
     }
 
     peerConnection?.close()
+
+    if (remoteAudioSource) {
+      remoteAudioSource.disconnect()
+      remoteAudioSource = undefined
+    }
+
     const ctx = audioContext
     audioContext = undefined
     void ctx?.close().catch(() => undefined)
+
+    audioElement.pause()
     audioElement.srcObject = null
     audioElement.remove()
 
@@ -351,33 +259,43 @@ export async function startTranslationSession({
   }
 
   function closeWithError(message: string): void {
+    if (isClosed) {
+      return
+    }
+
     closeSession()
     callbacks.onError?.(message)
     callbacks.onStatusChange('error')
   }
 
+  signal?.addEventListener('abort', closeSession, { once: true })
+
   try {
     peerConnection = new RTCPeerConnection()
     dataChannel = peerConnection.createDataChannel('oai-events')
-    addDataChannelListeners(dataChannel, callbacks, enableTranscription === true, latencyLogger, closeWithError)
+    addDataChannelListeners(dataChannel, latencyLogger, closeWithError)
 
     const outputSinkPromise = (async () => {
-      if (outputDeviceId) {
-        const ctx: AudioContextWithSinkId = new AudioContext({ latencyHint: 'interactive' })
+      if (!outputDeviceId) {
+        return
+      }
 
-        if (ctx.setSinkId) {
-          await ctx.setSinkId(outputDeviceId)
-          audioContext = ctx
-          audioElement.muted = true
-          latencyLogger.mark('audio context sink selected')
-        } else if (audioElement.setSinkId) {
-          void ctx.close().catch(() => undefined)
-          await audioElement.setSinkId(outputDeviceId)
-          latencyLogger.mark('audio element sink selected')
-        } else {
-          void ctx.close().catch(() => undefined)
-          throw new Error('This runtime does not support selecting an audio output device.')
-        }
+      const ctx = await createOutputAudioContext(outputDeviceId)
+
+      if (isClosed) {
+        void ctx?.close().catch(() => undefined)
+        return
+      }
+
+      if (ctx) {
+        audioContext = ctx
+        audioElement.muted = true
+        latencyLogger.mark('audio context sink selected')
+      } else if (audioElement.setSinkId) {
+        await audioElement.setSinkId(outputDeviceId)
+        latencyLogger.mark('audio element sink selected')
+      } else {
+        throw new Error('This runtime does not support selecting an audio output device.')
       }
     })()
 
@@ -390,19 +308,24 @@ export async function startTranslationSession({
       outputSinkPromise,
     ])
 
-    inputStream = capturedInputStream
+    if (isClosed) {
+      return { stop: closeSession }
+    }
 
-    const [inputTrack] = inputStream.getAudioTracks()
+    const [inputTrack] = capturedInputStream.getAudioTracks()
 
     if (!inputTrack) {
       throw new Error('No microphone audio track was captured.')
     }
 
-    peerConnection.addTrack(inputTrack, inputStream)
+    peerConnection.addTrack(inputTrack, capturedInputStream)
 
     peerConnection.addEventListener('track', event => {
-      const remoteStream = event.streams[0] ?? new MediaStream([event.track])
+      if (isClosed || audioElement.srcObject) {
+        return
+      }
 
+      const remoteStream = event.streams[0] ?? new MediaStream([event.track])
       latencyLogger.markOnce('first remote track')
       event.track.addEventListener('unmute', () => {
         latencyLogger.markOnce('remote track unmuted')
@@ -413,14 +336,21 @@ export async function startTranslationSession({
         receiver.jitterBufferTarget = 0
       }
 
-      if (audioElement.srcObject) return
       audioElement.srcObject = remoteStream
 
       if (audioContext) {
-        const source = audioContext.createMediaStreamSource(remoteStream)
-        source.connect(audioContext.destination)
-        void audioContext.resume().catch(() => undefined)
-        latencyLogger.markOnce('first playing')
+        // Keep Chromium's WebRTC remote audio pipeline active for MediaStreamAudioSourceNode.
+        void audioElement.play().catch(() => undefined)
+        remoteAudioSource = audioContext.createMediaStreamSource(remoteStream)
+        remoteAudioSource.connect(audioContext.destination)
+        void audioContext
+          .resume()
+          .then(() => {
+            latencyLogger.markOnce('first playing')
+          })
+          .catch(() => {
+            closeWithError('Could not play translated audio.')
+          })
       } else {
         void audioElement.play().catch(() => {
           closeWithError('Could not play translated audio.')
@@ -439,6 +369,7 @@ export async function startTranslationSession({
     const sdpResponse = await fetch('https://api.openai.com/v1/realtime/translations/calls', {
       method: 'POST',
       body: offer.sdp,
+      signal: signal ?? null,
       headers: {
         Authorization: `Bearer ${clientSecret}`,
         'Content-Type': 'application/sdp',
@@ -450,16 +381,27 @@ export async function startTranslationSession({
       throw new Error(`OpenAI rejected the WebRTC SDP offer: ${await getErrorResponseMessage(sdpResponse)}`)
     }
 
+    if (isClosed) {
+      return { stop: closeSession }
+    }
+
     await peerConnection.setRemoteDescription({
       type: 'answer',
       sdp: await sdpResponse.text(),
     })
     latencyLogger.mark('remote description applied')
 
+    if (isClosed) {
+      return { stop: closeSession }
+    }
+
     callbacks.onStatusChange('connected')
 
     return {
       stop: () => {
+        if (isClosed) {
+          return
+        }
         callbacks.onStatusChange('stopping')
         closeSession()
         callbacks.onStatusChange('idle')
@@ -467,6 +409,10 @@ export async function startTranslationSession({
     }
   } catch (error) {
     closeSession()
+
+    if (signal?.aborted) {
+      return { stop: closeSession }
+    }
 
     throw error
   }
