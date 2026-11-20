@@ -1,6 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { resolveSavedDeviceId } from '../../shared/deviceSelection.js'
+import {
+  filterDevicesForRole,
+  findMissingActiveDevice,
+  resolveSavedDeviceId,
+  validateDeviceForRole,
+  validateSessionRoute,
+  type ActiveAudioRoute,
+  type SessionDirection,
+} from '../../shared/deviceSelection.js'
 import {
   NOISE_REDUCTION_OPTIONS,
   resolveNoiseReductionMode,
@@ -48,6 +56,16 @@ function getStatusLabel(status: TranslationStatus): string {
   }
 }
 
+function getEmptyDeviceLabel(direction: SessionDirection, role: 'input' | 'output'): string {
+  if (direction === 'outbound' && role === 'output') {
+    return 'AI-Translate-To-Meet indisponível'
+  }
+  if (direction === 'inbound' && role === 'input') {
+    return 'AI-Translate-Meet-Audio-Capture indisponível'
+  }
+  return role === 'input' ? 'Nenhum microfone físico encontrado' : 'Nenhuma saída física encontrada'
+}
+
 function readStoredVolume(key: string): number {
   const raw = localStorage.getItem(key)
   if (!raw) {
@@ -60,6 +78,7 @@ function readStoredVolume(key: string): number {
 
 export interface TranslationSessionProps {
   sessionKey: string
+  direction: SessionDirection
   title: string
   initialTargetLanguage: TranslationLanguageCode
   initialNoiseReduction: NoiseReductionMode
@@ -79,6 +98,7 @@ export interface TranslationSessionProps {
 
 export function TranslationSession({
   sessionKey,
+  direction,
   title,
   initialTargetLanguage,
   initialNoiseReduction,
@@ -96,9 +116,11 @@ export function TranslationSession({
   onRunningChange,
 }: TranslationSessionProps) {
   const activeSession = useRef<ActiveTranslationSession | undefined>(undefined)
-  const startAbortController = useRef<AbortController | undefined>(undefined)
+  const sessionAbortController = useRef<AbortController | undefined>(undefined)
   const lastHandledCommandSeq = useRef(command?.seq ?? 0)
   const latestMutedRef = useRef(false)
+  const activeRouteRef = useRef<ActiveAudioRoute | null>(null)
+  const mountedRef = useRef(true)
 
   const [selectedInput, setSelectedInput] = useState(() => ({
     id: localStorage.getItem(`ai_translate_${sessionKey}_input`) ?? '',
@@ -122,15 +144,29 @@ export function TranslationSession({
   })
   const [muted, setMuted] = useState(false)
   const [outputVolume, setOutputVolume] = useState(() => readStoredVolume(`ai_translate_${sessionKey}_volume`))
+  const latestOutputVolumeRef = useRef(outputVolume)
   const [status, setStatus] = useState<TranslationStatus>('idle')
+  const [playbackReady, setPlaybackReady] = useState(false)
+  const [activeRoute, setActiveRoute] = useState<ActiveAudioRoute | null>(null)
   const [switchingDevice, setSwitchingDevice] = useState(false)
   const [levels, setLevels] = useState<AudioLevels>({ input: 0, output: 0 })
   const [stats, setStats] = useState<ConnectionStats | null>(null)
   const [error, setError] = useState('')
 
-  const inputDeviceId = resolveSavedDeviceId(inputDevices, selectedInput.id, selectedInput.label, initialInputDeviceId)
-  const outputDeviceId = resolveSavedDeviceId(
-    outputDevices,
+  const allowedInputs = useMemo(() => filterDevicesForRole(direction, 'input', inputDevices), [direction, inputDevices])
+  const allowedOutputs = useMemo(
+    () => filterDevicesForRole(direction, 'output', outputDevices),
+    [direction, outputDevices],
+  )
+
+  const configuredInputDeviceId = resolveSavedDeviceId(
+    allowedInputs,
+    selectedInput.id,
+    selectedInput.label,
+    initialInputDeviceId,
+  )
+  const configuredOutputDeviceId = resolveSavedDeviceId(
+    allowedOutputs,
     selectedOutput.id,
     selectedOutput.label,
     initialOutputDeviceId,
@@ -138,8 +174,19 @@ export function TranslationSession({
 
   const isRunning =
     status === 'requesting-media' || status === 'connecting' || status === 'connected' || status === 'reconnecting'
-  const isBusyTransition = status === 'requesting-media' || status === 'connecting' || status === 'stopping'
-  const canStart = status === 'idle' || status === 'error'
+  const isBusyTransition =
+    status === 'requesting-media' || status === 'connecting' || status === 'reconnecting' || status === 'stopping'
+
+  // While running, keep the displayed selection locked to the route the active session is actually using.
+  const inputDeviceId = isRunning && activeRoute ? activeRoute.inputId : configuredInputDeviceId
+  const outputDeviceId = isRunning && activeRoute ? activeRoute.outputId : configuredOutputDeviceId
+
+  const routeValidation = useMemo(
+    () => validateSessionRoute(direction, inputDeviceId, outputDeviceId, inputDevices, outputDevices),
+    [direction, inputDeviceId, outputDeviceId, inputDevices, outputDevices],
+  )
+
+  const canStart = (status === 'idle' || status === 'error') && routeValidation.ok
   const canChangeDevice = !isBusyTransition && !switchingDevice
 
   const latestStartRef = useRef<() => Promise<void>>(async () => undefined)
@@ -147,6 +194,21 @@ export function TranslationSession({
 
   async function switchDevice(kind: 'input' | 'output', deviceId: string): Promise<void> {
     const devices = kind === 'input' ? inputDevices : outputDevices
+    const validation = isRunning
+      ? validateSessionRoute(
+          direction,
+          kind === 'input' ? deviceId : inputDeviceId,
+          kind === 'output' ? deviceId : outputDeviceId,
+          inputDevices,
+          outputDevices,
+        )
+      : validateDeviceForRole(direction, kind, deviceId, devices)
+
+    if (!validation.ok) {
+      setError(validation.reason)
+      return
+    }
+
     const deviceLabel = devices.find(device => device.deviceId === deviceId)?.label ?? ''
     const saveSelection = (): void => {
       const next = { id: deviceId, label: deviceLabel }
@@ -157,9 +219,20 @@ export function TranslationSession({
       }
       localStorage.setItem(`ai_translate_${sessionKey}_${kind}`, deviceId)
       localStorage.setItem(`ai_translate_${sessionKey}_${kind}_label`, deviceLabel)
+
+      if (activeRouteRef.current) {
+        const updatedRoute: ActiveAudioRoute =
+          kind === 'input'
+            ? { ...activeRouteRef.current, inputId: deviceId, inputLabel: deviceLabel }
+            : { ...activeRouteRef.current, outputId: deviceId, outputLabel: deviceLabel }
+        activeRouteRef.current = updatedRoute
+        setActiveRoute(updatedRoute)
+      }
     }
 
-    if (!activeSession.current || (status !== 'connected' && status !== 'reconnecting')) {
+    const targetSession = activeSession.current
+    if (!targetSession || status !== 'connected') {
+      setError('')
       saveSelection()
       return
     }
@@ -169,11 +242,13 @@ export function TranslationSession({
 
     try {
       if (kind === 'input') {
-        await activeSession.current.setInputDevice(deviceId)
+        await targetSession.setInputDevice(deviceId)
       } else {
-        await activeSession.current.setOutputDevice(deviceId)
+        await targetSession.setOutputDevice(deviceId)
       }
-      saveSelection()
+      if (activeSession.current === targetSession) {
+        saveSelection()
+      }
     } catch (caughtError) {
       const fallbackMessage =
         kind === 'input' ? 'Falha ao trocar microfone ao vivo.' : 'Falha ao trocar saída de áudio ao vivo.'
@@ -217,40 +292,70 @@ export function TranslationSession({
     }
 
     const clamped = Math.min(1.5, Math.max(0, parsed))
+    latestOutputVolumeRef.current = clamped
     setOutputVolume(clamped)
     localStorage.setItem(`ai_translate_${sessionKey}_volume`, String(clamped))
     activeSession.current?.setOutputVolume(clamped)
   }
 
   function stop(): void {
-    startAbortController.current?.abort()
-    startAbortController.current = undefined
+    sessionAbortController.current?.abort()
+    sessionAbortController.current = undefined
     activeSession.current?.stop()
     activeSession.current = undefined
+    activeRouteRef.current = null
+    setActiveRoute(null)
+    setPlaybackReady(false)
     setLevels({ input: 0, output: 0 })
     setStats(null)
     setStatus('idle')
   }
 
   async function start(): Promise<void> {
+    const validation = validateSessionRoute(
+      direction,
+      configuredInputDeviceId,
+      configuredOutputDeviceId,
+      inputDevices,
+      outputDevices,
+    )
+
+    if (!validation.ok) {
+      setError(validation.reason)
+      return
+    }
+
     setError('')
     setStats(null)
-    startAbortController.current?.abort()
+    setPlaybackReady(false)
+    sessionAbortController.current?.abort()
+    sessionAbortController.current = undefined
     activeSession.current?.stop()
     activeSession.current = undefined
 
+    const inputDevice = inputDevices.find(device => device.deviceId === configuredInputDeviceId)
+    const outputDevice = outputDevices.find(device => device.deviceId === configuredOutputDeviceId)
+    const nextRoute: ActiveAudioRoute = {
+      inputId: configuredInputDeviceId,
+      inputLabel: inputDevice?.label || selectedInput.label,
+      outputId: configuredOutputDeviceId,
+      outputLabel: outputDevice?.label || selectedOutput.label,
+    }
+    activeRouteRef.current = nextRoute
+    setActiveRoute(nextRoute)
+
     const controller = new AbortController()
-    startAbortController.current = controller
+    sessionAbortController.current = controller
 
     try {
       const session = await startTranslationSession({
-        inputDeviceId,
-        outputDeviceId,
+        inputDeviceId: nextRoute.inputId,
+        outputDeviceId: nextRoute.outputId,
         targetLanguage,
         noiseReduction,
         disableAudioDSP: !browserDspEnabled,
-        initialMuted: enableMute ? muted : false,
-        initialOutputVolume: enableVolumeControl ? outputVolume : 1,
+        initialMuted: enableMute ? latestMutedRef.current : false,
+        initialOutputVolume: enableVolumeControl ? latestOutputVolumeRef.current : 1,
         signal: controller.signal,
         callbacks: {
           onStatusChange: nextStatus => {
@@ -273,8 +378,22 @@ export function TranslationSession({
               setLevels(nextLevels)
             }
           },
+          onPlaybackReady: ready => {
+            if (!controller.signal.aborted) {
+              setPlaybackReady(ready)
+            }
+          },
           onClosed: () => {
+            if (controller.signal.aborted) {
+              return
+            }
+            if (sessionAbortController.current === controller) {
+              sessionAbortController.current = undefined
+            }
             activeSession.current = undefined
+            activeRouteRef.current = null
+            setActiveRoute(null)
+            setPlaybackReady(false)
             setLevels({ input: 0, output: 0 })
             setStats(null)
           },
@@ -290,17 +409,21 @@ export function TranslationSession({
       if (enableMute) {
         session.setMuted(latestMutedRef.current)
       }
+      if (enableVolumeControl) {
+        session.setOutputVolume(latestOutputVolumeRef.current)
+      }
     } catch (caughtError) {
       if (controller.signal.aborted) {
         return
       }
 
+      if (sessionAbortController.current === controller) {
+        sessionAbortController.current = undefined
+      }
+      activeRouteRef.current = null
+      setActiveRoute(null)
       setStatus('error')
       setError(caughtError instanceof Error ? caughtError.message : 'Falha ao iniciar tradução.')
-    } finally {
-      if (startAbortController.current === controller) {
-        startAbortController.current = undefined
-      }
     }
   }
 
@@ -312,6 +435,36 @@ export function TranslationSession({
   useEffect(() => {
     onRunningChange?.(isRunning)
   }, [isRunning, onRunningChange])
+
+  // Stop only this direction if an actively routed device disappears while running.
+  useEffect(() => {
+    if (!isRunning || !activeRouteRef.current) {
+      return
+    }
+
+    const missing = findMissingActiveDevice(activeRouteRef.current, inputDevices, outputDevices)
+    if (!missing) {
+      return
+    }
+
+    sessionAbortController.current?.abort()
+    sessionAbortController.current = undefined
+    activeSession.current?.stop()
+    activeSession.current = undefined
+    activeRouteRef.current = null
+
+    queueMicrotask(() => {
+      if (!mountedRef.current) {
+        return
+      }
+      setActiveRoute(null)
+      setPlaybackReady(false)
+      setLevels({ input: 0, output: 0 })
+      setStats(null)
+      setStatus('error')
+      setError(`Dispositivo "${missing.label}" desconectado. Reconecte-o para retomar esta direção.`)
+    })
+  }, [inputDevices, isRunning, outputDevices])
 
   useEffect(() => {
     if (!command || command.seq === lastHandledCommandSeq.current) {
@@ -345,8 +498,10 @@ export function TranslationSession({
   }, [enableMute])
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
-      startAbortController.current?.abort()
+      mountedRef.current = false
+      sessionAbortController.current?.abort()
       activeSession.current?.stop()
     }
   }, [])
@@ -356,10 +511,11 @@ export function TranslationSession({
       <div className='session-header'>
         <h2 className='session-title'>{title}</h2>
         <div className='session-status-group'>
-          {status === 'connected' && stats && (
+          {status === 'connected' && (
             <span className='stats-chip'>
-              {stats.rttMs !== null ? `RTT ${stats.rttMs} ms` : 'Conectado'}
-              {stats.packetsLost > 0 ? ` · Perda ${stats.packetsLost}` : ''}
+              {stats?.rttMs !== null && stats?.rttMs !== undefined ? `RTT ${stats.rttMs} ms` : 'Peer conectado'}
+              {playbackReady ? ' · Áudio pronto' : ' · Aguardando áudio'}
+              {stats && stats.packetsLost > 0 ? ` · Perda ${stats.packetsLost}` : ''}
             </span>
           )}
           <div
@@ -415,8 +571,9 @@ export function TranslationSession({
             onChange={event => {
               void switchDevice('input', event.target.value)
             }}
-            disabled={!canChangeDevice}>
-            {inputDevices.map((device, index) => (
+            disabled={!canChangeDevice || allowedInputs.length === 0}>
+            {allowedInputs.length === 0 && <option value=''>{getEmptyDeviceLabel(direction, 'input')}</option>}
+            {allowedInputs.map((device, index) => (
               <option
                 key={device.deviceId || index}
                 value={device.deviceId}>
@@ -434,8 +591,9 @@ export function TranslationSession({
             onChange={event => {
               void switchDevice('output', event.target.value)
             }}
-            disabled={!canChangeDevice}>
-            {outputDevices.map((device, index) => (
+            disabled={!canChangeDevice || allowedOutputs.length === 0}>
+            {allowedOutputs.length === 0 && <option value=''>{getEmptyDeviceLabel(direction, 'output')}</option>}
+            {allowedOutputs.map((device, index) => (
               <option
                 key={device.deviceId || index}
                 value={device.deviceId}>
@@ -529,6 +687,7 @@ export function TranslationSession({
         </div>
       </section>
 
+      {!error && !routeValidation.ok && <p className='warning-message'>{routeValidation.reason}</p>}
       {error && <p className='error-message'>{error}</p>}
     </div>
   )

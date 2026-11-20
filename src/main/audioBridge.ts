@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import type { AudioBridgeStatus } from '../shared/audioBridgeTypes.js'
@@ -19,11 +19,35 @@ export type LoopbackConfig = {
   sampleRate: number
 }
 
+export type ManagedProcessLike = {
+  readonly exitCode: number | null
+  readonly killed: boolean
+  kill: (signal?: NodeJS.Signals | number) => boolean
+  on: {
+    (event: 'error', listener: (error: Error) => void): unknown
+    (event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
+  }
+  once: {
+    (event: 'error', listener: (error: Error) => void): unknown
+    (event: 'exit', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown
+  }
+}
+
+export type AudioBridgeDeps = {
+  platform?: NodeJS.Platform
+  listNodes?: () => Promise<Set<string>>
+  spawnLoopback?: (args: string[], env: NodeJS.ProcessEnv) => ManagedProcessLike
+  readyTimeoutMs?: number
+  stopTimeoutMs?: number
+  pollIntervalMs?: number
+}
+
 export const DEFAULT_LOOPBACK_LATENCY_MS = 10
 export const DEFAULT_LOOPBACK_QUANTUM = 256
 export const DEFAULT_LOOPBACK_SAMPLE_RATE = 48_000
 
 const NODE_READY_TIMEOUT_MS = 3000
+const STOP_TIMEOUT_MS = 1500
 const NODE_POLL_INTERVAL_MS = 100
 const PW_DUMP_TIMEOUT_MS = 3000
 
@@ -45,6 +69,15 @@ export const LOOPBACK_PAIRS: readonly LoopbackPairSpec[] = [
 ] as const
 
 export const EXPECTED_NODE_NAMES: readonly string[] = LOOPBACK_PAIRS.flatMap(pair => [pair.sinkName, pair.sourceName])
+
+const NODE_LABEL_BY_NAME = new Map<string, string>(
+  LOOPBACK_PAIRS.flatMap(pair => [
+    [pair.sinkName, pair.sinkLabel],
+    [pair.sourceName, pair.sourceLabel],
+  ]),
+)
+
+const PAIR_BY_GROUP = new Map<string, LoopbackPairSpec>(LOOPBACK_PAIRS.map(pair => [pair.group, pair]))
 
 function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
   if (!rawValue || !/^\d+$/.test(rawValue.trim())) {
@@ -69,6 +102,25 @@ export function resolveLoopbackConfig(env: NodeJS.ProcessEnv = process.env): Loo
     quantum,
     sampleRate: DEFAULT_LOOPBACK_SAMPLE_RATE,
   }
+}
+
+export function formatMissingNodeLabels(missingNodes: readonly string[]): string {
+  return missingNodes.map(name => NODE_LABEL_BY_NAME.get(name) ?? name).join(', ')
+}
+
+export function formatCommandError(command: string, error: unknown): string {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : ''
+
+  if (code === 'ENOENT') {
+    return `Dependência "${command}" não encontrada. Instale o PipeWire.`
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return `Falha ao executar "${command}".`
 }
 
 export function parsePipeWireNodeNames(pwDumpJson: string): Set<string> {
@@ -134,13 +186,15 @@ export function computeAudioBridgeStatus(
   error?: string,
 ): AudioBridgeStatus {
   const missingNodes = EXPECTED_NODE_NAMES.filter(nodeName => !presentNodes.has(nodeName))
+  const resolvedError =
+    error ?? (missingNodes.length > 0 ? `Nós ausentes: ${formatMissingNodeLabels(missingNodes)}` : undefined)
 
   return {
     supported: true,
     ready: missingNodes.length === 0,
     managedByApp: managedCount > 0,
     missingNodes,
-    ...(error ? { error } : {}),
+    ...(resolvedError ? { error: resolvedError } : {}),
   }
 }
 
@@ -150,7 +204,7 @@ async function delay(ms: number): Promise<void> {
   })
 }
 
-async function listPipeWireNodeNames(): Promise<Set<string>> {
+async function defaultListPipeWireNodeNames(): Promise<Set<string>> {
   const { stdout } = await execFileAsync('pw-dump', [], {
     timeout: PW_DUMP_TIMEOUT_MS,
     maxBuffer: 8 * 1024 * 1024,
@@ -159,17 +213,34 @@ async function listPipeWireNodeNames(): Promise<Set<string>> {
   return parsePipeWireNodeNames(stdout)
 }
 
-export class PipeWireAudioBridge {
-  private readonly managedProcesses = new Map<string, ChildProcess>()
-  private readonly config: LoopbackConfig
-  private inFlightStart: Promise<AudioBridgeStatus> | undefined
+function defaultSpawnLoopback(args: string[], env: NodeJS.ProcessEnv): ManagedProcessLike {
+  return spawn('pw-loopback', args, { stdio: 'ignore', env })
+}
 
-  constructor(env: NodeJS.ProcessEnv = process.env) {
+export class PipeWireAudioBridge {
+  private readonly managedProcesses = new Map<string, ManagedProcessLike>()
+  private readonly config: LoopbackConfig
+  private readonly platform: NodeJS.Platform
+  private readonly listNodes: () => Promise<Set<string>>
+  private readonly spawnLoopback: (args: string[], env: NodeJS.ProcessEnv) => ManagedProcessLike
+  private readonly readyTimeoutMs: number
+  private readonly stopTimeoutMs: number
+  private readonly pollIntervalMs: number
+  private inFlightStart: Promise<AudioBridgeStatus> | undefined
+  private inFlightRestart: Promise<AudioBridgeStatus> | undefined
+
+  constructor(env: NodeJS.ProcessEnv = process.env, deps: AudioBridgeDeps = {}) {
     this.config = resolveLoopbackConfig(env)
+    this.platform = deps.platform ?? process.platform
+    this.listNodes = deps.listNodes ?? defaultListPipeWireNodeNames
+    this.spawnLoopback = deps.spawnLoopback ?? defaultSpawnLoopback
+    this.readyTimeoutMs = deps.readyTimeoutMs ?? NODE_READY_TIMEOUT_MS
+    this.stopTimeoutMs = deps.stopTimeoutMs ?? STOP_TIMEOUT_MS
+    this.pollIntervalMs = deps.pollIntervalMs ?? NODE_POLL_INTERVAL_MS
   }
 
   async getStatus(): Promise<AudioBridgeStatus> {
-    if (process.platform !== 'linux') {
+    if (this.platform !== 'linux') {
       return {
         supported: false,
         ready: false,
@@ -178,24 +249,24 @@ export class PipeWireAudioBridge {
       }
     }
 
+    if (this.inFlightRestart) {
+      return this.inFlightRestart
+    }
+
     if (this.inFlightStart) {
       return this.inFlightStart
     }
 
     try {
-      const nodes = await listPipeWireNodeNames()
+      const nodes = await this.listNodes()
       return computeAudioBridgeStatus(nodes, this.managedProcesses.size)
     } catch (error) {
-      return computeAudioBridgeStatus(
-        new Set(),
-        this.managedProcesses.size,
-        error instanceof Error ? error.message : 'PipeWire (pw-dump) indisponível.',
-      )
+      return computeAudioBridgeStatus(new Set(), this.managedProcesses.size, formatCommandError('pw-dump', error))
     }
   }
 
   async ensureStarted(): Promise<AudioBridgeStatus> {
-    if (process.platform !== 'linux') {
+    if (this.platform !== 'linux') {
       return {
         supported: false,
         ready: false,
@@ -219,13 +290,26 @@ export class PipeWireAudioBridge {
   }
 
   async restart(): Promise<AudioBridgeStatus> {
-    if (this.inFlightStart) {
-      await this.inFlightStart.catch(() => undefined)
+    if (this.inFlightRestart) {
+      return this.inFlightRestart
     }
 
-    this.stopManaged()
-    await delay(150)
-    return this.ensureStarted()
+    const restartPromise = (async () => {
+      if (this.inFlightStart) {
+        await this.inFlightStart.catch(() => undefined)
+      }
+
+      const managedGroups = [...this.managedProcesses.keys()]
+      await this.stopGroupsAndWait(managedGroups)
+      return this.ensureStarted()
+    })().finally(() => {
+      if (this.inFlightRestart === restartPromise) {
+        this.inFlightRestart = undefined
+      }
+    })
+
+    this.inFlightRestart = restartPromise
+    return restartPromise
   }
 
   stopManaged(): void {
@@ -238,21 +322,95 @@ export class PipeWireAudioBridge {
     this.managedProcesses.clear()
   }
 
+  private async stopGroupsAndWait(groups: readonly string[]): Promise<void> {
+    if (groups.length === 0) {
+      return
+    }
+
+    const expectedRemovedNodes = groups.flatMap(group => {
+      const pair = PAIR_BY_GROUP.get(group)
+      return pair ? [pair.sinkName, pair.sourceName] : []
+    })
+
+    const exitPromises: Promise<void>[] = []
+
+    for (const group of groups) {
+      const child = this.managedProcesses.get(group)
+      if (!child) {
+        continue
+      }
+
+      this.managedProcesses.delete(group)
+
+      if (child.exitCode !== null) {
+        continue
+      }
+
+      exitPromises.push(
+        new Promise<void>(resolve => {
+          let settled = false
+          const finish = (): void => {
+            if (!settled) {
+              settled = true
+              clearTimeout(killTimer)
+              resolve()
+            }
+          }
+
+          child.once('exit', finish)
+          child.once('error', finish)
+
+          const killTimer = setTimeout(() => {
+            if (!settled) {
+              if (child.exitCode === null) {
+                child.kill('SIGKILL')
+              }
+              finish()
+            }
+          }, this.stopTimeoutMs)
+          killTimer.unref?.()
+
+          if (!child.killed) {
+            child.kill('SIGTERM')
+          }
+        }),
+      )
+    }
+
+    await Promise.all(exitPromises)
+
+    // Wait for PipeWire to unregister the stopped managed nodes before recreating them.
+    if (expectedRemovedNodes.length === 0) {
+      return
+    }
+
+    const deadline = Date.now() + this.stopTimeoutMs
+    while (Date.now() < deadline) {
+      try {
+        const nodes = await this.listNodes()
+        if (expectedRemovedNodes.every(nodeName => !nodes.has(nodeName))) {
+          return
+        }
+      } catch {
+        return
+      }
+
+      await delay(this.pollIntervalMs)
+    }
+  }
+
   private async startMissingPairs(): Promise<AudioBridgeStatus> {
     let nodes: Set<string>
 
     try {
-      nodes = await listPipeWireNodeNames()
+      nodes = await this.listNodes()
     } catch (error) {
-      return computeAudioBridgeStatus(
-        new Set(),
-        this.managedProcesses.size,
-        error instanceof Error ? error.message : 'Não foi possível conectar ao PipeWire.',
-      )
+      return computeAudioBridgeStatus(new Set(), this.managedProcesses.size, formatCommandError('pw-dump', error))
     }
 
     const pairsToSpawn = LOOPBACK_PAIRS.filter(pair => !nodes.has(pair.sinkName) || !nodes.has(pair.sourceName))
-    let spawnedAny = false
+    const spawnedInAttempt: string[] = []
+    let lastSpawnError: string | undefined
 
     for (const pair of pairsToSpawn) {
       // Avoid creating duplicate nodes if only one half exists externally.
@@ -260,22 +418,30 @@ export class PipeWireAudioBridge {
         continue
       }
 
-      if (this.spawnPair(pair)) {
-        spawnedAny = true
+      const spawned = this.spawnPair(pair, errorMessage => {
+        lastSpawnError = errorMessage
+      })
+
+      if (spawned) {
+        spawnedInAttempt.push(pair.group)
       }
     }
 
-    if (!spawnedAny) {
+    if (spawnedInAttempt.length === 0) {
       return computeAudioBridgeStatus(nodes, this.managedProcesses.size)
     }
 
-    const deadline = Date.now() + NODE_READY_TIMEOUT_MS
+    const deadline = Date.now() + this.readyTimeoutMs
 
     while (Date.now() < deadline) {
-      await delay(NODE_POLL_INTERVAL_MS)
+      await delay(this.pollIntervalMs)
+
+      if (lastSpawnError && spawnedInAttempt.every(group => !this.managedProcesses.has(group))) {
+        break
+      }
 
       try {
-        nodes = await listPipeWireNodeNames()
+        nodes = await this.listNodes()
         const status = computeAudioBridgeStatus(nodes, this.managedProcesses.size)
 
         if (status.ready) {
@@ -286,26 +452,33 @@ export class PipeWireAudioBridge {
       }
     }
 
-    return computeAudioBridgeStatus(
-      nodes,
-      this.managedProcesses.size,
-      'Os dispositivos virtuais do PipeWire não ficaram prontos a tempo.',
-    )
+    // Partial failure cleanup: stop only the processes opened in this failed attempt.
+    await this.stopGroupsAndWait(spawnedInAttempt)
+
+    try {
+      nodes = await this.listNodes()
+    } catch {
+      // Keep last known node snapshot.
+    }
+
+    const missingNodes = EXPECTED_NODE_NAMES.filter(nodeName => !nodes.has(nodeName))
+    const errorMessage =
+      lastSpawnError ??
+      `Falha ao criar áudio virtual. Faltando: ${formatMissingNodeLabels(missingNodes) || 'dispositivos PipeWire'}.`
+
+    return computeAudioBridgeStatus(nodes, this.managedProcesses.size, errorMessage)
   }
 
-  private spawnPair(pair: LoopbackPairSpec): boolean {
+  private spawnPair(pair: LoopbackPairSpec, onSpawnError: (message: string) => void): boolean {
     const existing = this.managedProcesses.get(pair.group)
 
     if (existing && existing.exitCode === null && !existing.killed) {
       return false
     }
 
-    const child = spawn('pw-loopback', buildLoopbackArgs(pair, this.config), {
-      stdio: 'ignore',
-      env: {
-        ...process.env,
-        PIPEWIRE_LATENCY: `${this.config.quantum}/${this.config.sampleRate}`,
-      },
+    const child = this.spawnLoopback(buildLoopbackArgs(pair, this.config), {
+      ...process.env,
+      PIPEWIRE_LATENCY: `${this.config.quantum}/${this.config.sampleRate}`,
     })
 
     const cleanup = (): void => {
@@ -315,7 +488,9 @@ export class PipeWireAudioBridge {
     }
 
     child.on('error', error => {
-      console.error(`Failed to start pw-loopback (${pair.group}):`, error.message)
+      const formatted = formatCommandError('pw-loopback', error)
+      console.error(`Failed to start pw-loopback (${pair.group}):`, formatted)
+      onSpawnError(formatted)
       cleanup()
     })
 

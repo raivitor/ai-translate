@@ -1,10 +1,32 @@
 export type AudioDeviceLike = Pick<MediaDeviceInfo, 'deviceId' | 'kind' | 'label'>
 
+export type SessionDirection = 'outbound' | 'inbound'
+export type DeviceRole = 'input' | 'output'
+
 export type DefaultAudioDeviceSelection = {
   outboundInputId: string
   outboundOutputId: string
   inboundInputId: string
   inboundOutputId: string
+}
+
+export type ActiveAudioRoute = {
+  inputId: string
+  inputLabel: string
+  outputId: string
+  outputLabel: string
+}
+
+export type RouteValidationResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason: string
+    }
+
+export type MissingActiveDevice = {
+  kind: DeviceRole
+  label: string
 }
 
 function normalizeLabel(device: AudioDeviceLike): string {
@@ -21,6 +43,10 @@ function isVirtualCableDevice(device: AudioDeviceLike): boolean {
 
 function isAiTranslateDevice(device: AudioDeviceLike): boolean {
   return normalizeLabel(device).includes('ai-translate')
+}
+
+function isVirtualDevice(device: AudioDeviceLike): boolean {
+  return isAiTranslateDevice(device) || isVirtualCableDevice(device)
 }
 
 function isAiTranslateToMeetOutput(device: AudioDeviceLike): boolean {
@@ -48,24 +74,34 @@ function isHeadphones(device: AudioDeviceLike): boolean {
   return hasAny(device.label.toLowerCase(), ['headphone', 'fones', 'earbud', 'headset'])
 }
 
-function findPreferredPhysicalInput(inputDevices: AudioDeviceLike[]): AudioDeviceLike | undefined {
-  const physicalInputs = inputDevices.filter(device => !isAiTranslateDevice(device) && !isVirtualCableDevice(device))
+export function filterDevicesForRole<T extends AudioDeviceLike>(
+  direction: SessionDirection,
+  role: DeviceRole,
+  devices: readonly T[],
+): T[] {
+  if (direction === 'outbound' && role === 'output') {
+    return devices.filter(isAiTranslateToMeetOutput)
+  }
+
+  if (direction === 'inbound' && role === 'input') {
+    return devices.filter(isAiTranslateFromMeetInput)
+  }
+
+  return devices.filter(device => !isVirtualDevice(device))
+}
+
+function findPreferredPhysicalInput(inputDevices: readonly AudioDeviceLike[]): AudioDeviceLike | undefined {
+  const physicalInputs = filterDevicesForRole('outbound', 'input', inputDevices)
 
   return (
     physicalInputs.find(device => isHyperXCloudIII(device) && !isDigitalAudioDevice(device)) ||
     physicalInputs.find(isHyperXCloudIII) ||
-    physicalInputs[0] ||
-    inputDevices[0]
+    physicalInputs[0]
   )
 }
 
-function findPreferredHeadsetOutput(
-  outputDevices: AudioDeviceLike[],
-  outboundOutputId: string,
-): AudioDeviceLike | undefined {
-  const physicalOutputs = outputDevices.filter(
-    device => device.deviceId !== outboundOutputId && !isAiTranslateDevice(device),
-  )
+function findPreferredHeadsetOutput(outputDevices: readonly AudioDeviceLike[]): AudioDeviceLike | undefined {
+  const physicalOutputs = filterDevicesForRole('inbound', 'output', outputDevices)
 
   return (
     physicalOutputs.find(device => isHyperXCloudIII(device) && isAnalogAudioDevice(device)) ||
@@ -74,27 +110,22 @@ function findPreferredHeadsetOutput(
     physicalOutputs.find(device => isHeadphones(device) && !isDigitalAudioDevice(device)) ||
     physicalOutputs.find(isHeadphones) ||
     physicalOutputs.find(device => !isDigitalAudioDevice(device)) ||
-    physicalOutputs[0] ||
-    outputDevices[0]
+    physicalOutputs[0]
   )
 }
 
 export function selectDefaultAudioDevices(
-  inputDevices: AudioDeviceLike[],
-  outputDevices: AudioDeviceLike[],
+  inputDevices: readonly AudioDeviceLike[],
+  outputDevices: readonly AudioDeviceLike[],
 ): DefaultAudioDeviceSelection {
   const outboundInput = findPreferredPhysicalInput(inputDevices)
-  const outboundOutput =
-    outputDevices.find(isAiTranslateToMeetOutput) || outputDevices.find(isVirtualCableDevice) || outputDevices[0]
-  const outboundOutputId = outboundOutput?.deviceId || ''
-
-  const inboundInput =
-    inputDevices.find(isAiTranslateFromMeetInput) || inputDevices.find(isVirtualCableDevice) || inputDevices[0]
-  const inboundOutput = findPreferredHeadsetOutput(outputDevices, outboundOutputId)
+  const outboundOutput = filterDevicesForRole('outbound', 'output', outputDevices)[0]
+  const inboundInput = filterDevicesForRole('inbound', 'input', inputDevices)[0]
+  const inboundOutput = findPreferredHeadsetOutput(outputDevices)
 
   return {
     outboundInputId: outboundInput?.deviceId || '',
-    outboundOutputId,
+    outboundOutputId: outboundOutput?.deviceId || '',
     inboundInputId: inboundInput?.deviceId || '',
     inboundOutputId: inboundOutput?.deviceId || '',
   }
@@ -118,5 +149,92 @@ export function resolveSavedDeviceId(
     }
   }
 
-  return fallbackDeviceId
+  if (fallbackDeviceId && devices.some(device => device.deviceId === fallbackDeviceId)) {
+    return fallbackDeviceId
+  }
+
+  return devices[0]?.deviceId || ''
+}
+
+export function validateDeviceForRole(
+  direction: SessionDirection,
+  role: DeviceRole,
+  deviceId: string,
+  devices: readonly AudioDeviceLike[],
+): RouteValidationResult {
+  const device = devices.find(item => item.deviceId === deviceId)
+
+  if (direction === 'outbound' && role === 'output') {
+    if (!device || !isAiTranslateToMeetOutput(device)) {
+      return {
+        ok: false,
+        reason: 'Dispositivo virtual AI-Translate-To-Meet ausente. Recrie o áudio virtual para enviar ao Meet.',
+      }
+    }
+    return { ok: true }
+  }
+
+  if (direction === 'inbound' && role === 'input') {
+    if (!device || !isAiTranslateFromMeetInput(device)) {
+      return {
+        ok: false,
+        reason:
+          'Dispositivo virtual AI-Translate-Meet-Audio-Capture ausente. Recrie o áudio virtual para ouvir o Meet.',
+      }
+    }
+    return { ok: true }
+  }
+
+  if (!device) {
+    return {
+      ok: false,
+      reason:
+        role === 'input'
+          ? 'Microfone físico indisponível. Conecte um microfone para iniciar.'
+          : 'Saída de áudio física indisponível. Conecte seus fones para iniciar.',
+    }
+  }
+
+  if (isVirtualDevice(device)) {
+    return {
+      ok: false,
+      reason:
+        role === 'input'
+          ? 'A entrada do Outbound precisa ser um microfone físico, não um nó virtual.'
+          : 'A saída do Inbound precisa ser um fone ou alto-falante físico, não um nó virtual.',
+    }
+  }
+
+  return { ok: true }
+}
+
+export function validateSessionRoute(
+  direction: SessionDirection,
+  inputDeviceId: string,
+  outputDeviceId: string,
+  inputDevices: readonly AudioDeviceLike[],
+  outputDevices: readonly AudioDeviceLike[],
+): RouteValidationResult {
+  const inputValidation = validateDeviceForRole(direction, 'input', inputDeviceId, inputDevices)
+  if (!inputValidation.ok) {
+    return inputValidation
+  }
+
+  return validateDeviceForRole(direction, 'output', outputDeviceId, outputDevices)
+}
+
+export function findMissingActiveDevice(
+  activeRoute: ActiveAudioRoute,
+  inputDevices: readonly AudioDeviceLike[],
+  outputDevices: readonly AudioDeviceLike[],
+): MissingActiveDevice | null {
+  if (!inputDevices.some(device => device.deviceId === activeRoute.inputId)) {
+    return { kind: 'input', label: activeRoute.inputLabel || 'dispositivo de entrada' }
+  }
+
+  if (!outputDevices.some(device => device.deviceId === activeRoute.outputId)) {
+    return { kind: 'output', label: activeRoute.outputLabel || 'dispositivo de saída' }
+  }
+
+  return null
 }

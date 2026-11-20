@@ -122,6 +122,12 @@ class FakePeerConnection extends FakeEventTarget {
   dataChannel = new FakeDataChannel()
   replacedTracks: FakeAudioTrack[] = []
   addedTracks: FakeAudioTrack[] = []
+  private readonly postSdpState: RTCPeerConnectionState
+
+  constructor(postSdpState: RTCPeerConnectionState = 'connected') {
+    super()
+    this.postSdpState = postSdpState
+  }
 
   createDataChannel(): FakeDataChannel {
     return this.dataChannel
@@ -143,7 +149,10 @@ class FakePeerConnection extends FakeEventTarget {
   async setLocalDescription(): Promise<void> {}
 
   async setRemoteDescription(): Promise<void> {
-    this.connectionState = 'connected'
+    this.connectionState = this.postSdpState
+    if (this.postSdpState === 'connected' || this.postSdpState === 'failed') {
+      this.emit('connectionstatechange')
+    }
   }
 
   async getStats() {
@@ -163,11 +172,18 @@ type TestHarness = {
   restore: () => void
 }
 
-function setupBrowserHarness(options?: { fastTimers?: boolean }): TestHarness {
+type HarnessOptions = {
+  fastTimers?: boolean
+  postSdpState?: (connectionIndex: number) => RTCPeerConnectionState
+  onGetUserMedia?: (callIndex: number, createDefault: () => FakeMediaStream) => Promise<FakeMediaStream>
+}
+
+function setupBrowserHarness(options?: HarnessOptions): TestHarness {
   const peerConnections: FakePeerConnection[] = []
   const audioContexts: FakeAudioContext[] = []
   const capturedTracks: FakeAudioTrack[] = []
   let trackCounter = 0
+  let pcCounter = 0
 
   const originalFetch = globalThis.fetch
   const originalWindow = (globalThis as Record<string, unknown>).window
@@ -197,8 +213,8 @@ function setupBrowserHarness(options?: { fastTimers?: boolean }): TestHarness {
   }
 
   const fakeDocument = {
-    createElement: () => {
-      const el = Object.assign(new FakeEventTarget(), {
+    createElement: () =>
+      Object.assign(new FakeEventTarget(), {
         controls: false,
         hidden: false,
         autoplay: false,
@@ -209,21 +225,26 @@ function setupBrowserHarness(options?: { fastTimers?: boolean }): TestHarness {
         pause: () => undefined,
         remove: () => undefined,
         setSinkId: async () => undefined,
-      })
-      return el
-    },
+      }),
     body: {
       append: () => undefined,
     },
   }
 
+  const createDefaultStream = (): FakeMediaStream => {
+    trackCounter += 1
+    const track = new FakeAudioTrack(`track-${trackCounter}`)
+    capturedTracks.push(track)
+    return new FakeMediaStream([track])
+  }
+
   const fakeNavigator = {
     mediaDevices: {
       getUserMedia: async () => {
-        trackCounter += 1
-        const track = new FakeAudioTrack(`track-${trackCounter}`)
-        capturedTracks.push(track)
-        return new FakeMediaStream([track])
+        if (options?.onGetUserMedia) {
+          return options.onGetUserMedia(trackCounter + 1, createDefaultStream)
+        }
+        return createDefaultStream()
       },
     },
   }
@@ -234,7 +255,10 @@ function setupBrowserHarness(options?: { fastTimers?: boolean }): TestHarness {
     MediaStream: FakeMediaStream,
     RTCPeerConnection: class extends FakePeerConnection {
       constructor() {
-        super()
+        const index = pcCounter
+        pcCounter += 1
+        const state = options?.postSdpState ? options.postSdpState(index) : 'connected'
+        super(state)
         peerConnections.push(this)
       }
     },
@@ -278,9 +302,10 @@ afterEach(() => {
   activeHarness = undefined
 })
 
-test('startTranslationSession connects, supports live mute and device hot-swap, and cleans up on stop', async () => {
-  activeHarness = setupBrowserHarness()
+test('startTranslationSession connects, separates peer connection from playback ready, and cleans up on stop', async () => {
+  activeHarness = setupBrowserHarness({ postSdpState: () => 'connecting' })
   const statuses: TranslationStatus[] = []
+  const playbackStates: boolean[] = []
   let closedCalled = false
 
   const session = await startTranslationSession({
@@ -291,39 +316,81 @@ test('startTranslationSession connects, supports live mute and device hot-swap, 
     disableAudioDSP: true,
     callbacks: {
       onStatusChange: status => statuses.push(status),
+      onPlaybackReady: ready => playbackStates.push(ready),
       onClosed: () => {
         closedCalled = true
       },
     },
   })
 
-  assert.deepStrictEqual(statuses, ['requesting-media', 'connecting', 'connected'])
-  assert.strictEqual(activeHarness.peerConnections.length, 1)
-  assert.strictEqual(activeHarness.capturedTracks.length, 1)
+  // SDP applied, but peer is still connecting -> must NOT be 'connected' yet.
+  assert.deepStrictEqual(statuses, ['requesting-media', 'connecting'])
+
+  const pc = activeHarness.peerConnections[0]
+  assert.ok(pc)
+  pc.connectionState = 'connected'
+  pc.emit('connectionstatechange')
+  assert.strictEqual(statuses.at(-1), 'connected')
+  assert.deepStrictEqual(playbackStates, [])
+
+  // Remote audio track arrives -> playback becomes ready.
+  pc.emit('track', {
+    track: new FakeAudioTrack('remote-1'),
+    streams: [new FakeMediaStream([new FakeAudioTrack('remote-1')])],
+    receiver: {},
+  })
+  await new Promise(resolve => setTimeout(resolve, 5))
+  assert.strictEqual(playbackStates.at(-1), true)
+
+  session.stop()
+  assert.strictEqual(closedCalled, true)
+  assert.strictEqual(playbackStates.at(-1), false)
+  assert.strictEqual(pc.closed, true)
+  assert.strictEqual(activeHarness.audioContexts[0]?.closed, true)
+  assert.strictEqual(activeHarness.capturedTracks[0]?.stopped, true)
+  assert.deepStrictEqual(statuses.slice(-2), ['stopping', 'idle'])
+})
+
+test('startTranslationSession preserves mute toggled while input device hot-swap is in flight', async () => {
+  let releaseSwapMedia: (() => void) | undefined
+
+  activeHarness = setupBrowserHarness({
+    onGetUserMedia: async (callIndex, createDefault) => {
+      if (callIndex === 2) {
+        await new Promise<void>(resolve => {
+          releaseSwapMedia = resolve
+        })
+      }
+      return createDefault()
+    },
+  })
+
+  const session = await startTranslationSession({
+    inputDeviceId: 'mic-1',
+    outputDeviceId: 'out-1',
+    targetLanguage: 'en',
+    callbacks: { onStatusChange: () => undefined },
+  })
+
   assert.strictEqual(activeHarness.capturedTracks[0]?.enabled, true)
 
-  // Live mute
+  // Start hot-swap, then toggle mute WHILE getUserMedia is still pending.
+  const swapPromise = session.setInputDevice('mic-2')
   session.setMuted(true)
   assert.strictEqual(activeHarness.capturedTracks[0]?.enabled, false)
 
-  // Live input hot-swap preserves mute state and stops old track
-  await session.setInputDevice('mic-2')
+  releaseSwapMedia?.()
+  await swapPromise
+
   assert.strictEqual(activeHarness.capturedTracks.length, 2)
   assert.strictEqual(activeHarness.capturedTracks[0]?.stopped, true)
   assert.strictEqual(activeHarness.capturedTracks[1]?.enabled, false)
   assert.strictEqual(activeHarness.peerConnections[0]?.replacedTracks.length, 1)
 
-  // Live output hot-swap calls AudioContext.setSinkId
   await session.setOutputDevice('out-2')
   assert.deepStrictEqual(activeHarness.audioContexts[0]?.sinkIds, ['out-1', 'out-2'])
 
-  // Clean stop
   session.stop()
-  assert.strictEqual(closedCalled, true)
-  assert.strictEqual(activeHarness.peerConnections[0]?.closed, true)
-  assert.strictEqual(activeHarness.audioContexts[0]?.closed, true)
-  assert.strictEqual(activeHarness.capturedTracks[1]?.stopped, true)
-  assert.deepStrictEqual(statuses.slice(-2), ['stopping', 'idle'])
 })
 
 test('startTranslationSession returns noop session immediately when AbortSignal is already aborted', async () => {
@@ -375,7 +442,49 @@ test('startTranslationSession closes with error when server sends a Realtime err
   assert.strictEqual(pc.closed, true)
 })
 
-test('startTranslationSession reconnects automatically on peer failure while preserving mute and volume', async () => {
+test('startTranslationSession stops retrying when repeated failures occur after SDP negotiation', async () => {
+  // Initial connection succeeds, reconnect peers either fail during SDP apply or after staying 'connecting'.
+  activeHarness = setupBrowserHarness({
+    fastTimers: true,
+    postSdpState: index => (index === 0 ? 'connected' : index === 1 ? 'failed' : 'connecting'),
+  })
+  const statuses: TranslationStatus[] = []
+  let errorMessage = ''
+
+  await startTranslationSession({
+    inputDeviceId: 'mic-1',
+    outputDeviceId: 'out-1',
+    targetLanguage: 'en',
+    callbacks: {
+      onStatusChange: status => statuses.push(status),
+      onError: message => {
+        errorMessage = message
+      },
+    },
+  })
+
+  // Fail initial peer; peer #1 fails immediately during setRemoteDescription; fail peers #2 and #3 asynchronously.
+  const firstPc = activeHarness.peerConnections[0]
+  assert.ok(firstPc)
+  firstPc.connectionState = 'failed'
+  firstPc.emit('connectionstatechange')
+  await new Promise(resolve => setTimeout(resolve, 40))
+
+  for (const index of [2, 3]) {
+    const pc = activeHarness.peerConnections[index]
+    assert.ok(pc, `Expected peer connection #${index} to exist`)
+    pc.connectionState = 'failed'
+    pc.emit('connectionstatechange')
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+
+  // Must exhaust MAX_RECONNECT_ATTEMPTS (1 initial + 3 retries = 4 total PCs) and stop in 'error'.
+  assert.strictEqual(activeHarness.peerConnections.length, 4)
+  assert.strictEqual(statuses.at(-1), 'error')
+  assert.match(errorMessage, /reconexão/i)
+})
+
+test('startTranslationSession reconnects automatically and reapplies latest mute and volume', async () => {
   activeHarness = setupBrowserHarness({ fastTimers: true })
   const statuses: TranslationStatus[] = []
 
@@ -383,8 +492,8 @@ test('startTranslationSession reconnects automatically on peer failure while pre
     inputDeviceId: 'mic-1',
     outputDeviceId: 'out-1',
     targetLanguage: 'en',
-    initialMuted: true,
-    initialOutputVolume: 1.25,
+    initialMuted: false,
+    initialOutputVolume: 1,
     callbacks: {
       onStatusChange: status => statuses.push(status),
     },
@@ -393,28 +502,30 @@ test('startTranslationSession reconnects automatically on peer failure while pre
   const firstPc = activeHarness.peerConnections[0]
   assert.ok(firstPc)
 
-  // Emit remote track to verify GainNode volume wiring
-  firstPc.emit('track', {
-    track: new FakeAudioTrack('remote-1'),
-    streams: [new FakeMediaStream([new FakeAudioTrack('remote-1')])],
-    receiver: {},
-  })
-  assert.strictEqual(activeHarness.audioContexts[0]?.lastGainNode?.gain.value, 1.25)
-
-  session.setOutputVolume(0.75)
-  assert.strictEqual(activeHarness.audioContexts[0]?.lastGainNode?.gain.value, 0.75)
-
-  // Trigger connection failure -> should reconnect automatically
   firstPc.connectionState = 'failed'
   firstPc.emit('connectionstatechange')
+
+  // Change mute & volume while reconnecting.
+  session.setMuted(true)
+  session.setOutputVolume(0.6)
 
   await new Promise(resolve => setTimeout(resolve, 30))
 
   assert.strictEqual(activeHarness.peerConnections.length, 2)
   assert.strictEqual(firstPc.closed, true)
   assert.strictEqual(activeHarness.capturedTracks[1]?.enabled, false)
+
+  const secondPc = activeHarness.peerConnections[1]
+  assert.ok(secondPc)
+  secondPc.emit('track', {
+    track: new FakeAudioTrack('remote-2'),
+    streams: [new FakeMediaStream([new FakeAudioTrack('remote-2')])],
+    receiver: {},
+  })
+  assert.strictEqual(activeHarness.audioContexts[1]?.lastGainNode?.gain.value, 0.6)
   assert.ok(statuses.includes('reconnecting'))
   assert.strictEqual(statuses.at(-1), 'connected')
+  assert.strictEqual(statuses.filter(status => status === 'connected').length, 2)
 
   session.stop()
 })

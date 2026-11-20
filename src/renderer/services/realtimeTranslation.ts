@@ -21,6 +21,7 @@ export type TranslationSessionCallbacks = {
   onClosed?: () => void
   onStats?: (stats: ConnectionStats) => void
   onLevels?: (levels: AudioLevels) => void
+  onPlaybackReady?: (ready: boolean) => void
 }
 
 export type StartTranslationSessionOptions = {
@@ -60,17 +61,14 @@ type SinkSelectableAudioElement = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>
 }
 
-type RTCRtpReceiverWithJitterBufferTarget = RTCRtpReceiver & {
-  jitterBufferTarget?: number
-}
-
 type LatencyLogger = {
   mark: (label: string) => void
   markOnce: (label: string) => void
 }
 
 type ManagedConnection = {
-  replaceInput: (deviceId: string, muted: boolean) => Promise<void>
+  getConnectionState: () => RTCPeerConnectionState | 'closed'
+  replaceInput: (deviceId: string) => Promise<void>
   replaceOutput: (deviceId: string) => Promise<void>
   applyMute: (muted: boolean) => void
   applyVolume: (volume: number) => void
@@ -242,14 +240,15 @@ type OpenConnectionParams = {
   targetLanguage: string
   noiseReduction?: NoiseReductionMode | undefined
   disableAudioDSP?: boolean | undefined
-  muted: boolean
-  outputVolume: number
+  getMuted: () => boolean
+  getOutputVolume: () => number
   enableLevels: boolean
   signal?: AbortSignal | undefined
   onMediaCaptured?: (() => void) | undefined
   onFatalError: (message: string) => void
-  onDisconnected: () => void
-  onReconnected: () => void
+  onDisconnected: (reason?: string) => void
+  onPeerConnected: () => void
+  onPlaybackReady: (ready: boolean) => void
 }
 
 async function openConnection({
@@ -258,14 +257,15 @@ async function openConnection({
   targetLanguage,
   noiseReduction,
   disableAudioDSP,
-  muted,
-  outputVolume,
+  getMuted,
+  getOutputVolume,
   enableLevels,
   signal,
   onMediaCaptured,
   onFatalError,
   onDisconnected,
-  onReconnected,
+  onPeerConnected,
+  onPlaybackReady,
 }: OpenConnectionParams): Promise<ManagedConnection> {
   const latencyLogger = createLatencyLogger()
   latencyLogger.mark('start')
@@ -281,8 +281,6 @@ async function openConnection({
   let remoteAudioSource: MediaStreamAudioSourceNode | undefined
   let outputGainNode: GainNode | undefined
   let outputAnalyser: AnalyserNode | undefined
-  let currentVolume = clampVolume(outputVolume)
-  let currentMuted = muted
   let isClosed = false
   let disconnectGraceTimer: number | undefined
 
@@ -293,7 +291,7 @@ async function openConnection({
   audioElement.controls = false
   audioElement.hidden = true
   audioElement.autoplay = true
-  audioElement.volume = Math.min(1, currentVolume)
+  audioElement.volume = Math.min(1, clampVolume(getOutputVolume()))
 
   audioElement.addEventListener('playing', () => {
     latencyLogger.markOnce('first playing')
@@ -329,7 +327,7 @@ async function openConnection({
     .getUserMedia({ audio: buildAudioConstraints(inputDeviceId, disableAudioDSP), video: false })
     .then(stream => {
       inputStream = stream
-      applyStreamMute(stream, currentMuted)
+      applyStreamMute(stream, getMuted())
       latencyLogger.mark('media captured')
       if (!isClosed) {
         onMediaCaptured?.()
@@ -352,6 +350,7 @@ async function openConnection({
     isClosed = true
     clearDisconnectTimer()
     signal?.removeEventListener('abort', close)
+    onPlaybackReady(false)
 
     if (dataChannel && dataChannel.readyState !== 'closed') {
       dataChannel.close()
@@ -396,6 +395,15 @@ async function openConnection({
     onFatalError(message)
   }
 
+  const applyVolume = (nextVolume: number): void => {
+    const clamped = clampVolume(nextVolume)
+    if (outputGainNode) {
+      outputGainNode.gain.value = clamped
+    } else {
+      audioElement.volume = Math.min(1, clamped)
+    }
+  }
+
   signal?.addEventListener('abort', close, { once: true })
 
   try {
@@ -411,15 +419,15 @@ async function openConnection({
       const state = peerConnection.connectionState
       if (state === 'connected') {
         clearDisconnectTimer()
-        onReconnected()
+        onPeerConnected()
       } else if (state === 'failed') {
         clearDisconnectTimer()
-        onDisconnected()
+        onDisconnected('Falha na conexão WebRTC.')
       } else if (state === 'disconnected' && disconnectGraceTimer === undefined) {
         disconnectGraceTimer = window.setTimeout(() => {
           disconnectGraceTimer = undefined
           if (!isClosed && peerConnection && peerConnection.connectionState !== 'connected') {
-            onDisconnected()
+            onDisconnected('Conexão WebRTC interrompida.')
           }
         }, DISCONNECT_GRACE_MS)
       }
@@ -467,6 +475,7 @@ async function openConnection({
       throw new Error('No microphone audio track was captured.')
     }
 
+    applyStreamMute(capturedInputStream, getMuted())
     attachInputMeter(capturedInputStream)
     audioSender = peerConnection.addTrack(inputTrack, capturedInputStream)
 
@@ -481,19 +490,15 @@ async function openConnection({
         latencyLogger.markOnce('remote track unmuted')
       })
 
-      const receiver = event.receiver as RTCRtpReceiverWithJitterBufferTarget
-      if (receiver.jitterBufferTarget !== undefined) {
-        receiver.jitterBufferTarget = 0
-      }
-
       audioElement.srcObject = remoteStream
+      const volume = clampVolume(getOutputVolume())
 
       if (audioContext) {
         // Keep Chromium's WebRTC remote audio pipeline active for MediaStreamAudioSourceNode.
         void audioElement.play().catch(() => undefined)
         remoteAudioSource = audioContext.createMediaStreamSource(remoteStream)
         outputGainNode = audioContext.createGain()
-        outputGainNode.gain.value = currentVolume
+        outputGainNode.gain.value = volume
         remoteAudioSource.connect(outputGainNode)
 
         if (enableLevels) {
@@ -508,16 +513,26 @@ async function openConnection({
         void audioContext
           .resume()
           .then(() => {
-            latencyLogger.markOnce('first playing')
+            if (!isClosed) {
+              latencyLogger.markOnce('first playing')
+              onPlaybackReady(true)
+            }
           })
           .catch(() => {
             triggerFatal('Could not play translated audio.')
           })
       } else {
-        audioElement.volume = Math.min(1, currentVolume)
-        void audioElement.play().catch(() => {
-          triggerFatal('Could not play translated audio.')
-        })
+        audioElement.volume = Math.min(1, volume)
+        void audioElement
+          .play()
+          .then(() => {
+            if (!isClosed) {
+              onPlaybackReady(true)
+            }
+          })
+          .catch(() => {
+            triggerFatal('Could not play translated audio.')
+          })
       }
     })
 
@@ -559,7 +574,8 @@ async function openConnection({
     }
 
     return {
-      replaceInput: async (nextDeviceId: string, nextMuted: boolean) => {
+      getConnectionState: () => (isClosed ? 'closed' : (peerConnection?.connectionState ?? 'closed')),
+      replaceInput: async (nextDeviceId: string) => {
         if (isClosed || !audioSender) {
           return
         }
@@ -574,8 +590,7 @@ async function openConnection({
           return
         }
 
-        currentMuted = nextMuted
-        applyStreamMute(nextStream, currentMuted)
+        applyStreamMute(nextStream, getMuted())
         const [nextTrack] = nextStream.getAudioTracks()
 
         if (!nextTrack) {
@@ -595,6 +610,8 @@ async function openConnection({
           return
         }
 
+        // Re-apply latest mute state in case it toggled while getUserMedia/replaceTrack was pending.
+        applyStreamMute(nextStream, getMuted())
         attachInputMeter(nextStream)
         const previousStream = inputStream
         inputStream = nextStream
@@ -609,33 +626,27 @@ async function openConnection({
 
         if (audioContext?.setSinkId) {
           await audioContext.setSinkId(nextDeviceId)
+          applyVolume(getOutputVolume())
           return
         }
 
         if (audioElement.setSinkId) {
           await audioElement.setSinkId(nextDeviceId)
+          applyVolume(getOutputVolume())
           return
         }
 
         throw new Error('This runtime does not support selecting an audio output device.')
       },
       applyMute: (nextMuted: boolean) => {
-        currentMuted = nextMuted
-        applyStreamMute(inputStream, currentMuted)
+        applyStreamMute(inputStream, nextMuted)
       },
-      applyVolume: (nextVolume: number) => {
-        currentVolume = clampVolume(nextVolume)
-        if (outputGainNode) {
-          outputGainNode.gain.value = currentVolume
-        } else {
-          audioElement.volume = Math.min(1, currentVolume)
-        }
-      },
+      applyVolume,
       readLevels: () => {
         let input = 0
         let output = 0
 
-        if (!currentMuted && inputAnalyser) {
+        if (!getMuted() && inputAnalyser) {
           inputAnalyser.getFloatTimeDomainData(inputSamples)
           input = computeAudioLevel(inputSamples)
         }
@@ -689,6 +700,7 @@ export async function startTranslationSession({
   let activeConnection: ManagedConnection | undefined
   let isStopped = false
   let isReconnecting = false
+  let isPeerConnected = false
   let reconnectAttempt = 0
   let reconnectTimer: number | undefined
   let cancelReconnectWait: (() => void) | undefined
@@ -730,6 +742,7 @@ export async function startTranslationSession({
     clearTimers()
     activeConnection?.close()
     activeConnection = undefined
+    callbacks.onPlaybackReady?.(false)
     callbacks.onLevels?.({ input: 0, output: 0 })
     callbacks.onClosed?.()
   }
@@ -778,15 +791,27 @@ export async function startTranslationSession({
     }
   }
 
+  const markPeerConnected = (): void => {
+    if (isStopped || isPeerConnected) {
+      return
+    }
+
+    isPeerConnected = true
+    reconnectAttempt = 0
+    isReconnecting = false
+    callbacks.onStatusChange('connected')
+    startTelemetry()
+  }
+
   const establishConnection = async (notifyConnectingOnCapture: boolean): Promise<ManagedConnection> => {
-    return openConnection({
+    const conn = await openConnection({
       inputDeviceId: currentInputDeviceId,
       outputDeviceId: currentOutputDeviceId,
       targetLanguage,
       noiseReduction,
       disableAudioDSP,
-      muted: currentMuted,
-      outputVolume: currentOutputVolume,
+      getMuted: () => currentMuted,
+      getOutputVolume: () => currentOutputVolume,
       enableLevels: Boolean(callbacks.onLevels),
       signal: sessionAbortController.signal,
       onMediaCaptured: notifyConnectingOnCapture
@@ -797,18 +822,23 @@ export async function startTranslationSession({
           }
         : undefined,
       onFatalError: failSession,
-      onDisconnected: () => {
+      onDisconnected: reason => {
         if (!isStopped && !isReconnecting) {
-          void triggerReconnect(reconnectAttempt + 1)
+          void triggerReconnect(reconnectAttempt + 1, reason)
         }
       },
-      onReconnected: () => {
+      onPeerConnected: markPeerConnected,
+      onPlaybackReady: ready => {
         if (!isStopped) {
-          reconnectAttempt = 0
-          callbacks.onStatusChange('connected')
+          callbacks.onPlaybackReady?.(ready)
         }
       },
     })
+
+    // Always re-apply the latest mute and volume in case they changed during handshake.
+    conn.applyMute(currentMuted)
+    conn.applyVolume(currentOutputVolume)
+    return conn
   }
 
   const triggerReconnect = async (nextAttempt: number, lastError?: string): Promise<void> => {
@@ -823,10 +853,12 @@ export async function startTranslationSession({
     }
 
     isReconnecting = true
+    isPeerConnected = false
     reconnectAttempt = nextAttempt
     clearTimers()
     activeConnection?.close()
     activeConnection = undefined
+    callbacks.onPlaybackReady?.(false)
     callbacks.onLevels?.({ input: 0, output: 0 })
     callbacks.onStatusChange('reconnecting')
 
@@ -856,10 +888,15 @@ export async function startTranslationSession({
       }
 
       activeConnection = nextConnection
-      reconnectAttempt = 0
       isReconnecting = false
-      callbacks.onStatusChange('connected')
-      startTelemetry()
+
+      // Only reset reconnectAttempt and mark 'connected' once the peer actually connects.
+      const peerState = nextConnection.getConnectionState()
+      if (peerState === 'connected') {
+        markPeerConnected()
+      } else if (peerState === 'failed') {
+        void triggerReconnect(nextAttempt + 1, 'Falha na conexão WebRTC.')
+      }
     } catch (caughtError) {
       isReconnecting = false
       if (!isStopped) {
@@ -881,8 +918,12 @@ export async function startTranslationSession({
     }
 
     activeConnection = initialConnection
-    callbacks.onStatusChange('connected')
-    startTelemetry()
+    const peerState = initialConnection.getConnectionState()
+    if (peerState === 'connected') {
+      markPeerConnected()
+    } else if (peerState === 'failed') {
+      void triggerReconnect(1, 'Falha na conexão WebRTC.')
+    }
 
     return {
       stop: () => {
@@ -895,7 +936,7 @@ export async function startTranslationSession({
       },
       setInputDevice: async (nextDeviceId: string) => {
         if (activeConnection) {
-          await activeConnection.replaceInput(nextDeviceId, currentMuted)
+          await activeConnection.replaceInput(nextDeviceId)
         }
         currentInputDeviceId = nextDeviceId
       },

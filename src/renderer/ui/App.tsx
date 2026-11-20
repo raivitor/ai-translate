@@ -150,10 +150,11 @@ export function App() {
   }
 
   async function handleRestartAudioBridge(): Promise<void> {
-    if (!aiTranslate) {
+    if (!aiTranslate || anySessionRunning) {
       return
     }
 
+    setError('')
     setRestartingBridge(true)
 
     try {
@@ -231,6 +232,7 @@ export function App() {
             <button
               type='button'
               className={anySessionRunning ? 'danger-button' : 'primary-button'}
+              disabled={!anySessionRunning && restartingBridge}
               onClick={() => {
                 triggerMeetingAction(anySessionRunning ? 'stop' : 'start')
               }}>
@@ -250,7 +252,12 @@ export function App() {
               <button
                 type='button'
                 className='secondary-button'
-                disabled={restartingBridge}
+                disabled={restartingBridge || anySessionRunning}
+                title={
+                  anySessionRunning
+                    ? 'Pare as sessões ativas antes de recriar o áudio virtual.'
+                    : 'Recriar dispositivos'
+                }
                 onClick={() => {
                   void handleRestartAudioBridge()
                 }}>
@@ -264,6 +271,7 @@ export function App() {
           <div className='sessions-grid'>
             <TranslationSession
               sessionKey='outbound'
+              direction='outbound'
               title='Outbound (sua fala)'
               initialTargetLanguage={DEFAULT_OUTBOUND_TARGET_LANGUAGE}
               initialNoiseReduction='near_field'
@@ -273,7 +281,7 @@ export function App() {
               initialInputDeviceId={defaultDevices.outboundInputId}
               initialOutputDeviceId={defaultDevices.outboundOutputId}
               targetLanguageLabel='Traduzir minha fala para'
-              inputLabel='Seu microfone físico (HyperX Cloud III)'
+              inputLabel='Seu microfone físico'
               outputLabel='Saída para o Meet (AI-Translate-To-Meet)'
               enableMute={true}
               command={meetingCommand}
@@ -282,6 +290,7 @@ export function App() {
 
             <TranslationSession
               sessionKey='inbound'
+              direction='inbound'
               title='Inbound (áudio do Meet)'
               initialTargetLanguage={DEFAULT_INBOUND_TARGET_LANGUAGE}
               initialNoiseReduction='off'
@@ -292,7 +301,7 @@ export function App() {
               initialOutputDeviceId={defaultDevices.inboundOutputId}
               targetLanguageLabel='Quero ouvir em'
               inputLabel='Áudio do Meet (AI-Translate-Meet-Audio-Capture)'
-              outputLabel='Seus fones de ouvido (HyperX Cloud III)'
+              outputLabel='Seus fones de ouvido'
               enableVolumeControl={true}
               command={meetingCommand}
               onRunningChange={handleInboundRunningChange}

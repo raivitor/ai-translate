@@ -333,6 +333,15 @@ button:disabled {
   font-weight: 700;
 }
 
+.warning-message {
+  padding: 12px 14px;
+  border: 1px solid #d9b675;
+  border-radius: 8px;
+  background: #fff8e6;
+  color: #7c5611;
+  font-weight: 700;
+}
+
 .sessions-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
