@@ -1,17 +1,11 @@
-const fs = require('fs')
-const https = require('https')
-const path = require('path')
+const fs = require('node:fs')
+const https = require('node:https')
+const path = require('node:path')
 
 const WARNING_THRESHOLD_DAYS = 365 * 2 // Alerta para pacotes sem update há 2 anos
-const PACKAGE_INFO_CACHE = new Map()
 
-// Função auxiliar para fazer requisição https (sem dependências externas como axios)
-const fetchPackageInfo = packageName => {
-  if (PACKAGE_INFO_CACHE.has(packageName)) {
-    return PACKAGE_INFO_CACHE.get(packageName)
-  }
-
-  const request = new Promise((resolve, reject) => {
+const fetchPackageInfo = packageName =>
+  new Promise((resolve, reject) => {
     const url = `https://registry.npmjs.org/${encodeURIComponent(packageName)}`
 
     https
@@ -20,7 +14,7 @@ const fetchPackageInfo = packageName => {
 
         if (res.statusCode === 404) {
           res.resume()
-          resolve(null) // Pacote não encontrado (privado ou erro)
+          resolve(null)
           return
         }
 
@@ -30,71 +24,85 @@ const fetchPackageInfo = packageName => {
           return
         }
 
-        res.on('data', chunk => (data += chunk))
-
+        res.on('data', chunk => {
+          data += chunk
+        })
         res.on('end', () => {
           try {
             resolve(JSON.parse(data))
-          } catch (e) {
-            reject(e)
+          } catch (error) {
+            reject(error)
           }
         })
       })
-      .on('error', err => reject(err))
+      .on('error', reject)
   })
 
-  PACKAGE_INFO_CACHE.set(packageName, request)
-  return request
-}
-
-const formatDate = dateString => {
-  if (!dateString) return 'N/A'
-  return new Date(dateString).toISOString().split('T')[0] // YYYY-MM-DD
-}
+const formatDate = dateString => (dateString ? new Date(dateString).toISOString().split('T')[0] : 'N/A')
 
 const getDaysAgo = dateString => {
   if (!dateString) return 0
-  const diff = new Date() - new Date(dateString)
-  return Math.floor(diff / (1000 * 60 * 60 * 24))
+  return Math.floor((Date.now() - new Date(dateString).getTime()) / (1000 * 60 * 60 * 24))
 }
 
-const getTargets = cwd => {
-  const workspaceTargets = [
-    { label: 'API', packageJsonPath: path.join(cwd, 'api', 'package.json') },
-    { label: 'DESKTOP', packageJsonPath: path.join(cwd, 'desktop', 'package.json') },
-  ].filter(target => fs.existsSync(target.packageJsonPath))
-
-  if (workspaceTargets.length > 0) {
-    return workspaceTargets
-  }
-
-  const localPackageJsonPath = path.join(cwd, 'package.json')
-  if (!fs.existsSync(localPackageJsonPath)) {
-    return []
-  }
-
-  const currentDirName = path.basename(cwd).toLowerCase()
-  const labelByDir = {
-    api: 'API',
-    desktop: 'DESKTOP',
-  }
-
-  return [
-    {
-      label: labelByDir[currentDirName] || path.basename(cwd) || 'Projeto',
-      packageJsonPath: localPackageJsonPath,
-    },
-  ]
+const formatDeprecatedNote = message => {
+  if (!message) return ''
+  return message.length <= 30 ? message : `${message.substring(0, 30)}...`
 }
 
-const formatDeprecatedNote = deprecatedMessage => {
-  if (!deprecatedMessage) return ''
-  if (deprecatedMessage.length <= 30) return deprecatedMessage
-  return `${deprecatedMessage.substring(0, 30)}...`
-}
+async function analyzePackages() {
+  const packageJsonPath = path.join(process.cwd(), 'package.json')
 
-const formatTableData = data =>
-  data.map(item => {
+  if (!fs.existsSync(packageJsonPath)) {
+    console.error('❌ Erro: nenhum package.json encontrado na raiz.')
+    process.exitCode = 1
+    return
+  }
+
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+  const allDeps = { ...pkg.dependencies, ...pkg.devDependencies }
+  const depNames = Object.keys(allDeps)
+
+  const results = await Promise.all(
+    depNames.map(async name => {
+      try {
+        const info = await fetchPackageInfo(name)
+
+        if (!info) {
+          return {
+            name,
+            version: allDeps[name],
+            status: '❓ Privado/Erro',
+            lastUpdate: 'N/A',
+            daysAgo: 0,
+            deprecated: '',
+          }
+        }
+
+        const lastModified = info.time?.modified
+        const latestVersion = info['dist-tags']?.latest || 'N/A'
+        const deprecated = info.versions?.[latestVersion]?.deprecated || ''
+
+        return {
+          name,
+          version: allDeps[name],
+          lastUpdate: formatDate(lastModified),
+          daysAgo: getDaysAgo(lastModified),
+          deprecated,
+        }
+      } catch {
+        return { name, version: allDeps[name], status: 'Erro na busca', lastUpdate: 'N/A', daysAgo: 0, deprecated: '' }
+      }
+    }),
+  )
+
+  results.sort((a, b) => {
+    if (a.deprecated && !b.deprecated) return -1
+    if (!a.deprecated && b.deprecated) return 1
+    return b.daysAgo - a.daysAgo
+  })
+
+  const table = results.map(item => {
     let status = '✅ Ativo'
     if (item.deprecated) status = '💀 DEPRECIADO'
     else if (item.daysAgo > WARNING_THRESHOLD_DAYS) status = '⚠️  Abandonado?'
@@ -110,92 +118,11 @@ const formatTableData = data =>
     }
   })
 
-async function analyzePackageTarget(target) {
-  const pkg = JSON.parse(fs.readFileSync(target.packageJsonPath, 'utf8'))
-  const allDeps = {
-    ...pkg.dependencies,
-    ...pkg.devDependencies,
-  }
-
-  const depNames = Object.keys(allDeps)
-  const data = await Promise.all(
-    depNames.map(async name => {
-      try {
-        const info = await fetchPackageInfo(name)
-
-        if (!info) {
-          return {
-            name,
-            version: allDeps[name],
-            status: '❓ Privado/Erro',
-            lastUpdate: 'N/A',
-            daysAgo: 0,
-            deprecated: false,
-          }
-        }
-
-        const time = info.time || {}
-        const lastModified = time.modified
-        const latestVersion = info['dist-tags']?.latest || 'N/A'
-        const isDeprecated = info.versions?.[latestVersion]?.deprecated || false
-
-        return {
-          name,
-          version: allDeps[name],
-          latest: latestVersion,
-          lastUpdate: formatDate(lastModified),
-          daysAgo: getDaysAgo(lastModified),
-          deprecated: isDeprecated,
-        }
-      } catch (err) {
-        return {
-          name,
-          version: allDeps[name],
-          status: 'Erro na busca',
-          lastUpdate: 'N/A',
-          daysAgo: 0,
-          deprecated: false,
-        }
-      }
-    }),
-  )
-
-  // Ordena: Depreciados primeiro, depois os mais antigos
-  data.sort((a, b) => {
-    if (a.deprecated && !b.deprecated) return -1
-    if (!a.deprecated && b.deprecated) return 1
-    return b.daysAgo - a.daysAgo
-  })
-
-  return {
-    label: target.label,
-    depCount: depNames.length,
-    tableData: formatTableData(data),
-  }
+  console.log(`📦 ${pkg.name || 'ai-translate'} (${depNames.length} pacotes)\n`)
+  console.table(table)
 }
 
-async function analyzePackages() {
-  try {
-    const targets = getTargets(process.cwd())
-
-    if (targets.length === 0) {
-      console.error('❌ Erro: nenhum package.json válido encontrado para análise.')
-      return
-    }
-
-    const analyses = await Promise.all(targets.map(analyzePackageTarget))
-
-    analyses.forEach((result, index) => {
-      if (index > 0) {
-        console.log('')
-      }
-
-      console.log(`📦 ${result.label} (${result.depCount} pacotes)\n`)
-      console.table(result.tableData)
-    })
-  } catch (error) {
-    console.error('Erro fatal:', error)
-  }
-}
-
-analyzePackages()
+analyzePackages().catch(error => {
+  console.error('Erro fatal:', error)
+  process.exitCode = 1
+})

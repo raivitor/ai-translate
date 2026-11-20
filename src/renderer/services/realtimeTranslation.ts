@@ -84,7 +84,7 @@ const LEVELS_POLL_INTERVAL_MS = 80
 const ANALYSER_FFT_SIZE = 256
 const MAX_OUTPUT_VOLUME = 1.5
 
-const latencyDebugEnabled = import.meta.env.VITE_LATENCY_DEBUG === 'true'
+const latencyDebugEnabled = import.meta.env?.VITE_LATENCY_DEBUG === 'true'
 
 const NOOP_SESSION: ActiveTranslationSession = {
   stop: () => undefined,

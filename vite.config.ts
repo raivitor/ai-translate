@@ -60,7 +60,7 @@ export default defineConfig({
   plugins: [react(), cspMetaPlugin()],
   build: {
     outDir: 'dist/renderer',
-    emptyOutDir: false,
+    emptyOutDir: true,
   },
   server: {
     host: DEV_SERVER_HOST,

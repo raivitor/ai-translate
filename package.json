@@ -1,7 +1,8 @@
 {
   "name": "ai-translate",
   "version": "0.1.0",
-  "description": "Ai Translate desktop shell built with Electron, Vite and React.",
+  "description": "Ai Translate desktop app for real-time Google Meet translation on Linux.",
+  "author": "Ai Translate",
   "private": true,
   "type": "module",
   "main": "dist/main/main.js",
@@ -15,7 +16,9 @@
     "dev:renderer": "vite --host 127.0.0.1",
     "dev:electron": "wait-on http-get://127.0.0.1:5173 && npm run build:main && cross-env NODE_ENV=development electron .",
     "build:main": "tsc -p tsconfig.build.json",
-    "build": "npm run build:main && vite build",
+    "build": "node -e \"import('node:fs').then(fs => fs.rmSync('dist', { recursive: true, force: true }))\" && npm run build:main && vite build",
+    "package:dir": "npm run build && electron-builder --linux dir",
+    "package": "npm run build && electron-builder --linux",
     "lint": "cross-env CI=true eslint .",
     "lint:fix": "cross-env CI=true eslint . --fix",
     "format:check": "prettier --check .",
@@ -23,6 +26,25 @@
     "typecheck": "tsc --noEmit",
     "test": "cross-env NODE_ENV=test node --import tsx --test --test-reporter spec \"src/**/*.unit.spec.ts\"",
     "validate": "npm run lint && npm run typecheck && npm test"
+  },
+  "build": {
+    "appId": "com.aitranslate.desktop",
+    "productName": "Ai Translate",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "maintainer": "Ai Translate <local@ai-translate.invalid>"
+    }
   },
   "dependencies": {
     "react": "^19.3.1",
@@ -37,6 +59,7 @@
     "concurrently": "^9.2.5",
     "cross-env": "^10.1.0",
     "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react-hooks": "^7.1.1",
