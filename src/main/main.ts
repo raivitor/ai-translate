@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { clearApiKey, hasApiKey, loadApiKey, saveApiKey } from './apiKeyStore.js'
-import { PipeWireAudioBridge } from './audioBridge.js'
+import { PipeWireAudioBridge, resolveLoopbackConfig } from './audioBridge.js'
 import { createClientSecret } from './openaiRealtimeHandler.js'
 import {
   isAllowedPermissionOrigin,
@@ -27,6 +27,11 @@ const securityConfig: RendererSecurityConfig = {
 const DEV_LOAD_MAX_ATTEMPTS = 5
 const DEV_LOAD_RETRY_DELAY_MS = 250
 const MUTE_SHORTCUT = 'CommandOrControl+Shift+M'
+
+const loopbackConfig = resolveLoopbackConfig(process.env)
+if (process.platform === 'linux' && !process.env.PIPEWIRE_LATENCY) {
+  process.env.PIPEWIRE_LATENCY = `${loopbackConfig.quantum}/${loopbackConfig.sampleRate}`
+}
 
 const audioBridge = new PipeWireAudioBridge()
 

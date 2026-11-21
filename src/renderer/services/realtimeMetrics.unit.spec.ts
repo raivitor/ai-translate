@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { computeAudioLevel, extractConnectionStats, getReconnectDelayMs } from './realtimeMetrics.js'
+import {
+  computeAudioLevel,
+  DISCONNECT_GRACE_MS,
+  extractConnectionStats,
+  getReconnectDelayMs,
+} from './realtimeMetrics.js'
 
-test('getReconnectDelayMs applies exponential backoff starting at 1s', () => {
-  assert.strictEqual(getReconnectDelayMs(1), 1000)
-  assert.strictEqual(getReconnectDelayMs(2), 2000)
-  assert.strictEqual(getReconnectDelayMs(3), 4000)
-  assert.strictEqual(getReconnectDelayMs(0), 1000)
+test('getReconnectDelayMs applies fast low-latency exponential backoff starting at 500ms', () => {
+  assert.strictEqual(DISCONNECT_GRACE_MS, 2500)
+  assert.strictEqual(getReconnectDelayMs(1), 500)
+  assert.strictEqual(getReconnectDelayMs(2), 1000)
+  assert.strictEqual(getReconnectDelayMs(3), 2000)
+  assert.strictEqual(getReconnectDelayMs(0), 500)
 })
 
 test('computeAudioLevel returns 0 for silence and clamps loud signals to 1', () => {

@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 
-import type { AudioBridgeStatus } from '../shared/audioBridgeTypes.js'
+import { VIRTUAL_AUDIO_NODES, type AudioBridgeStatus } from '../shared/audioBridgeTypes.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -42,8 +42,8 @@ export type AudioBridgeDeps = {
   pollIntervalMs?: number
 }
 
-export const DEFAULT_LOOPBACK_LATENCY_MS = 10
-export const DEFAULT_LOOPBACK_QUANTUM = 256
+export const DEFAULT_LOOPBACK_LATENCY_MS = 5
+export const DEFAULT_LOOPBACK_QUANTUM = 128
 export const DEFAULT_LOOPBACK_SAMPLE_RATE = 48_000
 
 const NODE_READY_TIMEOUT_MS = 3000
@@ -53,18 +53,18 @@ const PW_DUMP_TIMEOUT_MS = 3000
 
 export const LOOPBACK_PAIRS: readonly LoopbackPairSpec[] = [
   {
-    group: 'ai_translate_to_meet_loopback',
-    sinkName: 'ai_translate_to_meet_sink',
-    sinkLabel: 'AI-Translate-To-Meet',
-    sourceName: 'ai_translate_to_meet_mic',
-    sourceLabel: 'AI-Translate-Virtual-Mic-for-Meet',
+    group: VIRTUAL_AUDIO_NODES.toCallGroup,
+    sinkName: VIRTUAL_AUDIO_NODES.toCallSinkName,
+    sinkLabel: VIRTUAL_AUDIO_NODES.toCallSinkLabel,
+    sourceName: VIRTUAL_AUDIO_NODES.toCallMicName,
+    sourceLabel: VIRTUAL_AUDIO_NODES.toCallMicLabel,
   },
   {
-    group: 'ai_translate_from_meet_loopback',
-    sinkName: 'ai_translate_from_meet_sink',
-    sinkLabel: 'AI-Translate-From-Meet',
-    sourceName: 'ai_translate_from_meet_capture',
-    sourceLabel: 'AI-Translate-Meet-Audio-Capture',
+    group: VIRTUAL_AUDIO_NODES.fromCallGroup,
+    sinkName: VIRTUAL_AUDIO_NODES.fromCallSinkName,
+    sinkLabel: VIRTUAL_AUDIO_NODES.fromCallSinkLabel,
+    sourceName: VIRTUAL_AUDIO_NODES.fromCallCaptureName,
+    sourceLabel: VIRTUAL_AUDIO_NODES.fromCallCaptureLabel,
   },
 ] as const
 
@@ -159,8 +159,9 @@ export function parsePipeWireNodeNames(pwDumpJson: string): Set<string> {
 }
 
 export function buildLoopbackArgs(pair: LoopbackPairSpec, config: LoopbackConfig): string[] {
-  const captureProps = `{ media.class = "Audio/Sink" node.name = "${pair.sinkName}" node.description = "${pair.sinkLabel}" node.virtual = true audio.rate = ${config.sampleRate} audio.position = [ MONO ] }`
-  const playbackProps = `{ media.class = "Audio/Source" node.name = "${pair.sourceName}" node.description = "${pair.sourceLabel}" node.virtual = true audio.rate = ${config.sampleRate} audio.position = [ MONO ] }`
+  const nodeLatency = `${config.quantum}/${config.sampleRate}`
+  const captureProps = `{ media.class = "Audio/Sink" node.name = "${pair.sinkName}" node.description = "${pair.sinkLabel}" node.virtual = true audio.rate = ${config.sampleRate} audio.position = [ MONO ] node.latency = "${nodeLatency}" }`
+  const playbackProps = `{ media.class = "Audio/Source" node.name = "${pair.sourceName}" node.description = "${pair.sourceLabel}" node.virtual = true audio.rate = ${config.sampleRate} audio.position = [ MONO ] node.latency = "${nodeLatency}" }`
 
   return [
     '-n',

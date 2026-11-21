@@ -6,42 +6,50 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$APP_NAME"
 STATE_FILE="$STATE_DIR/audio-loopbacks.env"
 LEGACY_STATE_FILE="$STATE_DIR/audio-modules.env"
 
-TO_MEET_GROUP="ai_translate_to_meet_loopback"
-FROM_MEET_GROUP="ai_translate_from_meet_loopback"
+TO_CALL_GROUP="ai_translate_to_call_loopback"
+FROM_CALL_GROUP="ai_translate_from_call_loopback"
+LEGACY_TO_MEET_GROUP="ai_translate_to_meet_loopback"
+LEGACY_FROM_MEET_GROUP="ai_translate_from_meet_loopback"
 
-TO_MEET_SINK="ai_translate_to_meet_sink"
-TO_MEET_MIC="ai_translate_to_meet_mic"
-FROM_MEET_SINK="ai_translate_from_meet_sink"
-FROM_MEET_CAPTURE="ai_translate_from_meet_capture"
+TO_CALL_SINK="ai_translate_to_call_sink"
+TO_CALL_MIC="ai_translate_to_call_mic"
+FROM_CALL_SINK="ai_translate_from_call_sink"
+FROM_CALL_CAPTURE="ai_translate_from_call_capture"
 
-TO_MEET_SINK_LABEL="AI-Translate-To-Meet"
-TO_MEET_MIC_LABEL="AI-Translate-Virtual-Mic-for-Meet"
-FROM_MEET_SINK_LABEL="AI-Translate-From-Meet"
-FROM_MEET_CAPTURE_LABEL="AI-Translate-Meet-Audio-Capture"
+LEGACY_TO_MEET_SINK="ai_translate_to_meet_sink"
+LEGACY_TO_MEET_MIC="ai_translate_to_meet_mic"
+LEGACY_FROM_MEET_SINK="ai_translate_from_meet_sink"
+LEGACY_FROM_MEET_CAPTURE="ai_translate_from_meet_capture"
 
-LOOPBACK_LATENCY_MS="${AI_TRANSLATE_LOOPBACK_LATENCY_MS:-10}"
-LOOPBACK_QUANTUM="${AI_TRANSLATE_LOOPBACK_QUANTUM:-256}"
+TO_CALL_SINK_LABEL="AI-Translate-To-Call"
+TO_CALL_MIC_LABEL="AI-Translate-Virtual-Mic"
+FROM_CALL_SINK_LABEL="AI-Translate-Call-Speaker"
+FROM_CALL_CAPTURE_LABEL="AI-Translate-Call-Capture"
+
+LOOPBACK_LATENCY_MS="${AI_TRANSLATE_LOOPBACK_LATENCY_MS:-5}"
+LOOPBACK_QUANTUM="${AI_TRANSLATE_LOOPBACK_QUANTUM:-128}"
 
 usage() {
   cat <<'USAGE'
 Usage: ./setup-audio.sh [--check|--remove]
 
-Creates temporary PipeWire virtual audio devices for Ai Translate on Linux.
+Creates low-latency PipeWire virtual audio devices for Ai Translate on Linux.
 
 Default:
-  creates the sinks and sources needed by the Electron app and Google Meet.
+  creates the sinks and sources needed by the Electron app and any video call app
+  (Google Meet, Microsoft Teams web/desktop, Discord web/desktop, etc.).
 
 Options:
   --check   print whether the expected PipeWire nodes are available
-  --remove  stop temporary pw-loopback processes and legacy Ai Translate pactl modules
+  --remove  stop managed pw-loopback processes and legacy Ai Translate modules
   --help    print this help
 
 Environment:
-  AI_TRANSLATE_LOOPBACK_LATENCY_MS  desired pw-loopback latency in ms (default: 10)
+  AI_TRANSLATE_LOOPBACK_LATENCY_MS  desired pw-loopback latency in ms (default: 5)
   AI_TRANSLATE_LOOPBACK_QUANTUM     PipeWire quantum in samples at 48 kHz for the
                                     loopback nodes; lower = less latency but higher
-                                    CPU usage. Common values: 128 (~2.7 ms), 256
-                                    (~5.3 ms, default), 512 (~10.7 ms). Must be a
+                                    CPU usage. Common values: 64 (~1.3 ms), 128
+                                    (~2.7 ms, default), 256 (~5.3 ms). Must be a
                                     power of two.
 USAGE
 }
@@ -58,7 +66,7 @@ require_command() {
 
 require_pipewire() {
   require_command pipewire "Install PipeWire."
-  require_command pipewire-pulse "Install pipewire-pulse so Electron/Chrome can use the PipeWire audio server."
+  require_command pipewire-pulse "Install pipewire-pulse so Electron/Chrome/Teams/Discord can use the PipeWire audio server."
   require_command wireplumber "Install WirePlumber."
   require_command pw-cli "Install PipeWire tools."
   require_command pw-loopback "Install PipeWire tools with pw-loopback."
@@ -90,7 +98,7 @@ validate_loopback_quantum() {
 
   # Require power of two
   if (( (LOOPBACK_QUANTUM & (LOOPBACK_QUANTUM - 1)) != 0 )); then
-    echo "AI_TRANSLATE_LOOPBACK_QUANTUM must be a power of two (e.g. 128, 256, 512)." >&2
+    echo "AI_TRANSLATE_LOOPBACK_QUANTUM must be a power of two (e.g. 64, 128, 256)." >&2
     exit 1
   fi
 }
@@ -141,13 +149,13 @@ read_state_value() {
 managed_loopback_exists() {
   local existing_pid
 
-  existing_pid="$(find_loopback_pid_for "$TO_MEET_GROUP")"
-  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$TO_MEET_GROUP"; then
+  existing_pid="$(find_loopback_pid_for "$TO_CALL_GROUP")"
+  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$TO_CALL_GROUP"; then
     return 0
   fi
 
-  existing_pid="$(find_loopback_pid_for "$FROM_MEET_GROUP")"
-  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$FROM_MEET_GROUP"; then
+  existing_pid="$(find_loopback_pid_for "$FROM_CALL_GROUP")"
+  if [[ -n "$existing_pid" ]] && is_managed_loopback_pid "$existing_pid" "$FROM_CALL_GROUP"; then
     return 0
   fi
 
@@ -231,12 +239,13 @@ start_loopback_once() {
     exit 1
   fi
 
+  local node_latency="$LOOPBACK_QUANTUM/48000"
   local capture_props
   local playback_props
-  capture_props="{ media.class = \"Audio/Sink\" node.name = \"$capture_node\" node.description = \"$capture_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] }"
-  playback_props="{ media.class = \"Audio/Source\" node.name = \"$playback_node\" node.description = \"$playback_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] }"
+  capture_props="{ media.class = \"Audio/Sink\" node.name = \"$capture_node\" node.description = \"$capture_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] node.latency = \"$node_latency\" }"
+  playback_props="{ media.class = \"Audio/Source\" node.name = \"$playback_node\" node.description = \"$playback_label\" node.virtual = true audio.rate = 48000 audio.position = [ MONO ] node.latency = \"$node_latency\" }"
 
-  nohup env PIPEWIRE_LATENCY="$LOOPBACK_QUANTUM/48000" pw-loopback \
+  nohup env PIPEWIRE_LATENCY="$node_latency" pw-loopback \
     -n "$group_name" \
     -g "$group_name" \
     -c 1 \
@@ -271,8 +280,8 @@ write_state_file() {
   fi
 
   if ! cat >"$STATE_FILE" <<EOF
-TO_MEET_LOOPBACK_PID=${TO_MEET_LOOPBACK_PID:-}
-FROM_MEET_LOOPBACK_PID=${FROM_MEET_LOOPBACK_PID:-}
+TO_CALL_LOOPBACK_PID=${TO_CALL_LOOPBACK_PID:-}
+FROM_CALL_LOOPBACK_PID=${FROM_CALL_LOOPBACK_PID:-}
 LOOPBACK_LATENCY_MS=$LOOPBACK_LATENCY_MS
 LOOPBACK_QUANTUM=$LOOPBACK_QUANTUM
 EOF
@@ -296,8 +305,8 @@ recreate_loopbacks_if_config_changed() {
 
   echo "Loopback settings changed (latency=${LOOPBACK_LATENCY_MS}ms, quantum=${LOOPBACK_QUANTUM}); recreating managed loopbacks."
 
-  stop_loopback "$TO_MEET_GROUP" "TO_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
-  stop_loopback "$FROM_MEET_GROUP" "FROM_MEET_LOOPBACK_PID" >/dev/null 2>&1 || true
+  stop_loopback "$TO_CALL_GROUP" "TO_CALL_LOOPBACK_PID" >/dev/null 2>&1 || true
+  stop_loopback "$FROM_CALL_GROUP" "FROM_CALL_LOOPBACK_PID" >/dev/null 2>&1 || true
   rm -f "$STATE_FILE"
 }
 
@@ -307,6 +316,10 @@ stop_loopback() {
   local pid
 
   pid="$(read_state_value "$state_key")"
+
+  if [[ -n "$pid" ]] && ! is_managed_loopback_pid "$pid" "$group_name"; then
+    pid=""
+  fi
 
   if [[ -z "$pid" ]]; then
     pid="$(find_loopback_pid_for "$group_name")"
@@ -339,11 +352,19 @@ remove_loopbacks() {
   local removed_count=0
   local legacy_removed_count=0
 
-  if stop_loopback "$TO_MEET_GROUP" "TO_MEET_LOOPBACK_PID"; then
+  if stop_loopback "$TO_CALL_GROUP" "TO_CALL_LOOPBACK_PID"; then
     removed_count=$((removed_count + 1))
   fi
 
-  if stop_loopback "$FROM_MEET_GROUP" "FROM_MEET_LOOPBACK_PID"; then
+  if stop_loopback "$FROM_CALL_GROUP" "FROM_CALL_LOOPBACK_PID"; then
+    removed_count=$((removed_count + 1))
+  fi
+
+  if stop_loopback "$LEGACY_TO_MEET_GROUP" "TO_MEET_LOOPBACK_PID"; then
+    removed_count=$((removed_count + 1))
+  fi
+
+  if stop_loopback "$LEGACY_FROM_MEET_GROUP" "FROM_MEET_LOOPBACK_PID"; then
     removed_count=$((removed_count + 1))
   fi
 
@@ -351,10 +372,14 @@ remove_loopbacks() {
 
   if legacy_pactl_available; then
     for marker in \
-      "source_name=$FROM_MEET_CAPTURE" \
-      "sink_name=$FROM_MEET_SINK" \
-      "source_name=$TO_MEET_MIC" \
-      "sink_name=$TO_MEET_SINK"; do
+      "source_name=$FROM_CALL_CAPTURE" \
+      "sink_name=$FROM_CALL_SINK" \
+      "source_name=$TO_CALL_MIC" \
+      "sink_name=$TO_CALL_SINK" \
+      "source_name=$LEGACY_FROM_MEET_CAPTURE" \
+      "sink_name=$LEGACY_FROM_MEET_SINK" \
+      "source_name=$LEGACY_TO_MEET_MIC" \
+      "sink_name=$LEGACY_TO_MEET_SINK"; do
       while legacy_module_loaded_for "$marker"; do
         local module_id
         module_id="$(legacy_module_id_for "$marker")"
@@ -403,10 +428,10 @@ print_status() {
   echo
   echo "Expected PipeWire nodes:"
 
-  print_node_status sink "$TO_MEET_SINK" "$TO_MEET_SINK_LABEL"
-  print_node_status source "$TO_MEET_MIC" "$TO_MEET_MIC_LABEL"
-  print_node_status sink "$FROM_MEET_SINK" "$FROM_MEET_SINK_LABEL"
-  print_node_status source "$FROM_MEET_CAPTURE" "$FROM_MEET_CAPTURE_LABEL"
+  print_node_status sink "$TO_CALL_SINK" "$TO_CALL_SINK_LABEL"
+  print_node_status source "$TO_CALL_MIC" "$TO_CALL_MIC_LABEL"
+  print_node_status sink "$FROM_CALL_SINK" "$FROM_CALL_SINK_LABEL"
+  print_node_status source "$FROM_CALL_CAPTURE" "$FROM_CALL_CAPTURE_LABEL"
   echo
 
   if [[ -n "$configured_latency" ]]; then
@@ -436,28 +461,28 @@ setup_audio() {
   recreate_loopbacks_if_config_changed
 
   start_loopback_once \
-    TO_MEET_LOOPBACK_PID \
-    "$TO_MEET_GROUP" \
-    "$TO_MEET_SINK" \
-    "$TO_MEET_SINK_LABEL" \
-    "$TO_MEET_MIC" \
-    "$TO_MEET_MIC_LABEL"
+    TO_CALL_LOOPBACK_PID \
+    "$TO_CALL_GROUP" \
+    "$TO_CALL_SINK" \
+    "$TO_CALL_SINK_LABEL" \
+    "$TO_CALL_MIC" \
+    "$TO_CALL_MIC_LABEL"
 
   start_loopback_once \
-    FROM_MEET_LOOPBACK_PID \
-    "$FROM_MEET_GROUP" \
-    "$FROM_MEET_SINK" \
-    "$FROM_MEET_SINK_LABEL" \
-    "$FROM_MEET_CAPTURE" \
-    "$FROM_MEET_CAPTURE_LABEL"
+    FROM_CALL_LOOPBACK_PID \
+    "$FROM_CALL_GROUP" \
+    "$FROM_CALL_SINK" \
+    "$FROM_CALL_SINK_LABEL" \
+    "$FROM_CALL_CAPTURE" \
+    "$FROM_CALL_CAPTURE_LABEL"
 
   write_state_file
   print_status
 
   echo
-  echo "Google Meet devices:"
-  echo "  Microphone: $TO_MEET_MIC_LABEL"
-  echo "  Speaker:    $FROM_MEET_SINK_LABEL"
+  echo "Video call app devices (Google Meet, Teams web/desktop, Discord web/desktop):"
+  echo "  Microphone: $TO_CALL_MIC_LABEL"
+  echo "  Speaker:    $FROM_CALL_SINK_LABEL"
 }
 
 main() {

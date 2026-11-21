@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { test } from 'node:test'
 
+import { VIRTUAL_AUDIO_NODES } from '../shared/audioBridgeTypes.js'
 import {
   buildLoopbackArgs,
   computeAudioBridgeStatus,
@@ -53,12 +54,12 @@ test('parsePipeWireNodeNames extracts node.name only from PipeWire Node entries'
     {
       id: 42,
       type: 'PipeWire:Interface:Node',
-      info: { props: { 'node.name': 'ai_translate_to_meet_sink' } },
+      info: { props: { 'node.name': VIRTUAL_AUDIO_NODES.toCallSinkName } },
     },
     {
       id: 43,
       type: 'PipeWire:Interface:Node',
-      info: { props: { 'node.name': 'ai_translate_to_meet_mic' } },
+      info: { props: { 'node.name': VIRTUAL_AUDIO_NODES.toCallMicName } },
     },
     {
       id: 44,
@@ -69,8 +70,8 @@ test('parsePipeWireNodeNames extracts node.name only from PipeWire Node entries'
 
   const names = parsePipeWireNodeNames(dump)
 
-  assert.strictEqual(names.has('ai_translate_to_meet_sink'), true)
-  assert.strictEqual(names.has('ai_translate_to_meet_mic'), true)
+  assert.strictEqual(names.has(VIRTUAL_AUDIO_NODES.toCallSinkName), true)
+  assert.strictEqual(names.has(VIRTUAL_AUDIO_NODES.toCallMicName), true)
   assert.strictEqual(names.has('should_be_ignored'), false)
   assert.strictEqual(names.size, 2)
 })
@@ -80,7 +81,10 @@ test('parsePipeWireNodeNames returns empty set on invalid JSON', () => {
   assert.strictEqual(parsePipeWireNodeNames('{}').size, 0)
 })
 
-test('resolveLoopbackConfig validates environment overrides and falls back safely', () => {
+test('resolveLoopbackConfig uses ultra-low-latency defaults and validates overrides safely', () => {
+  assert.strictEqual(DEFAULT_LOOPBACK_LATENCY_MS, 5)
+  assert.strictEqual(DEFAULT_LOOPBACK_QUANTUM, 128)
+
   assert.deepStrictEqual(resolveLoopbackConfig({}), {
     latencyMs: DEFAULT_LOOPBACK_LATENCY_MS,
     quantum: DEFAULT_LOOPBACK_QUANTUM,
@@ -89,12 +93,12 @@ test('resolveLoopbackConfig validates environment overrides and falls back safel
 
   assert.deepStrictEqual(
     resolveLoopbackConfig({
-      AI_TRANSLATE_LOOPBACK_LATENCY_MS: '15',
-      AI_TRANSLATE_LOOPBACK_QUANTUM: '128',
+      AI_TRANSLATE_LOOPBACK_LATENCY_MS: '4',
+      AI_TRANSLATE_LOOPBACK_QUANTUM: '64',
     }),
     {
-      latencyMs: 15,
-      quantum: 128,
+      latencyMs: 4,
+      quantum: 64,
       sampleRate: 48_000,
     },
   )
@@ -112,20 +116,20 @@ test('resolveLoopbackConfig validates environment overrides and falls back safel
   )
 })
 
-test('buildLoopbackArgs configures mono 48kHz loopback props for each pair', () => {
-  const [toMeet] = LOOPBACK_PAIRS
-  assert.ok(toMeet)
+test('buildLoopbackArgs configures low-latency mono 48kHz loopback props for each pair', () => {
+  const [toCall] = LOOPBACK_PAIRS
+  assert.ok(toCall)
 
-  const args = buildLoopbackArgs(toMeet, {
-    latencyMs: 10,
-    quantum: 256,
+  const args = buildLoopbackArgs(toCall, {
+    latencyMs: 5,
+    quantum: 128,
     sampleRate: 48_000,
   })
 
   assert.ok(args.includes('-c'))
   assert.strictEqual(args[args.indexOf('-c') + 1], '1')
   assert.strictEqual(args[args.indexOf('-m') + 1], '[ MONO ]')
-  assert.strictEqual(args[args.indexOf('-l') + 1], '10')
+  assert.strictEqual(args[args.indexOf('-l') + 1], '5')
 
   const captureProps = args[args.indexOf('--capture-props') + 1] ?? ''
   const playbackProps = args[args.indexOf('--playback-props') + 1] ?? ''
@@ -133,8 +137,10 @@ test('buildLoopbackArgs configures mono 48kHz loopback props for each pair', () 
   assert.match(captureProps, /Audio\/Sink/)
   assert.match(captureProps, /audio\.rate = 48000/)
   assert.match(captureProps, /audio\.position = \[ MONO \]/)
+  assert.match(captureProps, /node\.latency = "128\/48000"/)
   assert.match(playbackProps, /Audio\/Source/)
   assert.match(playbackProps, /audio\.rate = 48000/)
+  assert.match(playbackProps, /node\.latency = "128\/48000"/)
 })
 
 test('computeAudioBridgeStatus formats missing nodes and dependency errors clearly', () => {
@@ -144,12 +150,12 @@ test('computeAudioBridgeStatus formats missing nodes and dependency errors clear
   assert.strictEqual(readyStatus.managedByApp, true)
   assert.deepStrictEqual(readyStatus.missingNodes, [])
 
-  const partialStatus = computeAudioBridgeStatus(new Set(['ai_translate_to_meet_sink']), 0)
+  const partialStatus = computeAudioBridgeStatus(new Set([VIRTUAL_AUDIO_NODES.toCallSinkName]), 0)
   assert.strictEqual(partialStatus.ready, false)
   assert.strictEqual(partialStatus.missingNodes.length, 3)
-  assert.match(partialStatus.error ?? '', /AI-Translate-Virtual-Mic-for-Meet/)
+  assert.match(partialStatus.error ?? '', /AI-Translate-Virtual-Mic/)
 
-  assert.strictEqual(formatMissingNodeLabels(['ai_translate_to_meet_sink']), 'AI-Translate-To-Meet')
+  assert.strictEqual(formatMissingNodeLabels([VIRTUAL_AUDIO_NODES.toCallSinkName]), VIRTUAL_AUDIO_NODES.toCallSinkLabel)
   assert.match(
     formatCommandError('pw-loopback', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })),
     /pw-loopback/,
@@ -157,7 +163,7 @@ test('computeAudioBridgeStatus formats missing nodes and dependency errors clear
 })
 
 test('PipeWireAudioBridge cleans up only processes opened in a failed partial startup attempt', async () => {
-  const activeNodes = new Set<string>(['ai_translate_to_meet_sink', 'ai_translate_to_meet_mic'])
+  const activeNodes = new Set<string>([VIRTUAL_AUDIO_NODES.toCallSinkName, VIRTUAL_AUDIO_NODES.toCallMicName])
   const spawnedChildren: FakeChildProcess[] = []
 
   const bridge = new PipeWireAudioBridge(
@@ -183,7 +189,7 @@ test('PipeWireAudioBridge cleans up only processes opened in a failed partial st
   assert.strictEqual(status.ready, false)
   assert.strictEqual(spawnedChildren.length, 1)
   assert.deepStrictEqual(spawnedChildren[0]?.signals, ['SIGTERM'])
-  assert.match(status.error ?? '', /AI-Translate-From-Meet/)
+  assert.match(status.error ?? '', /AI-Translate-Call-Speaker/)
   assert.strictEqual(status.managedByApp, false)
 })
 
@@ -240,10 +246,10 @@ test('PipeWireAudioBridge restart waits for process exit and node removal before
   assert.strictEqual(spawnedChildren.length, 4)
 
   const lastExitIndex = Math.max(
-    events.indexOf('exited:ai_translate_to_meet_loopback'),
-    events.indexOf('exited:ai_translate_from_meet_loopback'),
+    events.indexOf(`exited:${VIRTUAL_AUDIO_NODES.toCallGroup}`),
+    events.indexOf(`exited:${VIRTUAL_AUDIO_NODES.fromCallGroup}`),
   )
-  const secondSpawnIndex = events.lastIndexOf('spawn:ai_translate_to_meet_loopback')
+  const secondSpawnIndex = events.lastIndexOf(`spawn:${VIRTUAL_AUDIO_NODES.toCallGroup}`)
   assert.ok(lastExitIndex >= 0 && secondSpawnIndex > lastExitIndex)
 
   bridge.stopManaged()

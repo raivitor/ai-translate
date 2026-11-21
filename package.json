@@ -1,7 +1,7 @@
 {
   "name": "ai-translate",
   "version": "0.1.0",
-  "description": "Ai Translate desktop app for real-time Google Meet translation on Linux.",
+  "description": "Ai Translate desktop app for ultra-low-latency real-time PT-BR/EN video call translation (Google Meet, Teams, Discord) on Linux.",
   "author": "Ai Translate",
   "private": true,
   "type": "module",

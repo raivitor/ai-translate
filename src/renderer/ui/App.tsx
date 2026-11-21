@@ -1,13 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { AudioBridgeStatus } from '../../shared/audioBridgeTypes.js'
-import { selectDefaultAudioDevices } from '../../shared/deviceSelection.js'
-import type { TranslationLanguageCode } from '../../shared/translationLanguages.js'
+import { VIRTUAL_AUDIO_NODES, type AudioBridgeStatus } from '../../shared/audioBridgeTypes.js'
+import { REQUIRED_HEADSET_NAME, selectDefaultAudioDevices } from '../../shared/deviceSelection.js'
 import { ApiKeySettings } from './ApiKeySettings.js'
 import { type SessionCommand, TranslationSession } from './TranslationSession.js'
-
-const DEFAULT_OUTBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'en'
-const DEFAULT_INBOUND_TARGET_LANGUAGE: TranslationLanguageCode = 'pt'
 
 function getAudioBridgeLabel(status: AudioBridgeStatus): string {
   if (status.ready) {
@@ -49,7 +45,7 @@ export function App() {
   const [restartingBridge, setRestartingBridge] = useState(false)
   const [outboundRunning, setOutboundRunning] = useState(false)
   const [inboundRunning, setInboundRunning] = useState(false)
-  const [meetingCommand, setMeetingCommand] = useState<SessionCommand | undefined>(undefined)
+  const [callCommand, setCallCommand] = useState<SessionCommand | undefined>(undefined)
 
   useEffect(() => {
     if (!aiTranslate) {
@@ -135,9 +131,13 @@ export function App() {
   }, [])
 
   const anySessionRunning = outboundRunning || inboundRunning
+  const canStartAny = Boolean(
+    (defaultDevices.outboundInputId && defaultDevices.outboundOutputId) ||
+    (defaultDevices.inboundInputId && defaultDevices.inboundOutputId),
+  )
 
-  function triggerMeetingAction(action: 'start' | 'stop'): void {
-    setMeetingCommand(previous => ({ action, seq: (previous?.seq ?? 0) + 1 }))
+  function triggerCallAction(action: 'start' | 'stop'): void {
+    setCallCommand(previous => ({ action, seq: (previous?.seq ?? 0) + 1 }))
   }
 
   async function requestDeviceAccess(): Promise<void> {
@@ -176,7 +176,7 @@ export function App() {
         className='toolbar'
         aria-labelledby='app-title'>
         <div>
-          <span className='eyebrow'>Linux virtual audio bridge</span>
+          <span className='eyebrow'>Baixa latência · Google Meet · Teams · Discord</span>
           <h1 id='app-title'>Ai Translate</h1>
         </div>
         <div className='toolbar-actions'>
@@ -232,11 +232,11 @@ export function App() {
             <button
               type='button'
               className={anySessionRunning ? 'danger-button' : 'primary-button'}
-              disabled={!anySessionRunning && restartingBridge}
+              disabled={!anySessionRunning && (restartingBridge || !canStartAny)}
               onClick={() => {
-                triggerMeetingAction(anySessionRunning ? 'stop' : 'start')
+                triggerCallAction(anySessionRunning ? 'stop' : 'start')
               }}>
-              {anySessionRunning ? 'Parar reunião' : 'Iniciar reunião'}
+              {anySessionRunning ? 'Parar chamada' : 'Iniciar chamada'}
             </button>
             {hasMissingDeviceLabels && (
               <button
@@ -266,44 +266,36 @@ export function App() {
             )}
           </section>
 
+          <section
+            className='call-routing-hint'
+            aria-label='Configuração dos aplicativos de chamada'>
+            <span>
+              <strong>Meet / Teams / Discord (web ou desktop):</strong> Microfone{' '}
+              <code>{VIRTUAL_AUDIO_NODES.toCallMicLabel}</code> · Alto-falante{' '}
+              <code>{VIRTUAL_AUDIO_NODES.fromCallSinkLabel}</code> · Headset fixo <code>{REQUIRED_HEADSET_NAME}</code>
+            </span>
+          </section>
+
           {error && <p className='error-message'>{error}</p>}
 
           <div className='sessions-grid'>
             <TranslationSession
-              sessionKey='outbound'
               direction='outbound'
-              title='Outbound (sua fala)'
-              initialTargetLanguage={DEFAULT_OUTBOUND_TARGET_LANGUAGE}
-              initialNoiseReduction='near_field'
-              initialBrowserDsp={false}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
-              initialInputDeviceId={defaultDevices.outboundInputId}
-              initialOutputDeviceId={defaultDevices.outboundOutputId}
-              targetLanguageLabel='Traduzir minha fala para'
-              inputLabel='Seu microfone físico'
-              outputLabel='Saída para o Meet (AI-Translate-To-Meet)'
-              enableMute={true}
-              command={meetingCommand}
+              inputDeviceId={defaultDevices.outboundInputId}
+              outputDeviceId={defaultDevices.outboundOutputId}
+              command={callCommand}
               onRunningChange={handleOutboundRunningChange}
             />
 
             <TranslationSession
-              sessionKey='inbound'
               direction='inbound'
-              title='Inbound (áudio do Meet)'
-              initialTargetLanguage={DEFAULT_INBOUND_TARGET_LANGUAGE}
-              initialNoiseReduction='off'
-              initialBrowserDsp={false}
               inputDevices={inputDevices}
               outputDevices={outputDevices}
-              initialInputDeviceId={defaultDevices.inboundInputId}
-              initialOutputDeviceId={defaultDevices.inboundOutputId}
-              targetLanguageLabel='Quero ouvir em'
-              inputLabel='Áudio do Meet (AI-Translate-Meet-Audio-Capture)'
-              outputLabel='Seus fones de ouvido'
-              enableVolumeControl={true}
-              command={meetingCommand}
+              inputDeviceId={defaultDevices.inboundInputId}
+              outputDeviceId={defaultDevices.inboundOutputId}
+              command={callCommand}
               onRunningChange={handleInboundRunningChange}
             />
           </div>

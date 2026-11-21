@@ -11,9 +11,9 @@ export type AudioLevels = {
 
 export const MAX_RECONNECT_ATTEMPTS = 3
 export const SESSION_ROLLOVER_MS = 55 * 60 * 1000
-export const DISCONNECT_GRACE_MS = 4000
+export const DISCONNECT_GRACE_MS = 2500
 
-const BASE_RECONNECT_DELAY_MS = 1000
+const BASE_RECONNECT_DELAY_MS = 500
 
 export function getReconnectDelayMs(attempt: number): number {
   const safeAttempt = Math.max(1, attempt)

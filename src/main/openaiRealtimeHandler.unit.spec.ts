@@ -187,10 +187,15 @@ test('createClientSecret accepts normalized supported languages', async () => {
   assert.strictEqual(output.language, 'pt')
 })
 
-test('createClientSecret accepts all realtime translation languages', async () => {
-  const supportedLanguages = ['es', 'pt', 'fr', 'ja', 'ru', 'zh', 'de', 'ko', 'hi', 'id', 'vi', 'it', 'en']
+test('createClientSecret accepts only English and Brazilian Portuguese target languages', async () => {
+  const supportedLanguages: ReadonlyArray<readonly [string, string]> = [
+    ['en', 'en'],
+    ['en-US', 'en'],
+    ['pt', 'pt'],
+    ['pt-BR', 'pt'],
+  ]
 
-  for (const lang of supportedLanguages) {
+  for (const [inputLang, expectedApiLang] of supportedLanguages) {
     let capturedBody: Record<string, unknown> = {}
 
     globalThis.fetch = (_input, init) => {
@@ -200,19 +205,19 @@ test('createClientSecret accepts all realtime translation languages', async () =
     }
 
     await createClientSecret({
-      targetLanguage: lang,
+      targetLanguage: inputLang,
       apiKey: 'test-key',
     })
 
     const session = capturedBody.session as Record<string, unknown>
     const audio = session.audio as Record<string, unknown>
     const output = audio.output as Record<string, unknown>
-    assert.strictEqual(output.language, lang)
+    assert.strictEqual(output.language, expectedApiLang)
   }
 })
 
 test('createClientSecret rejects all unsupported target languages', async () => {
-  const unsupported = ['ar', 'nl', 'pl', 'tr', 'sv', '']
+  const unsupported = ['es', 'fr', 'de', 'pt-PT', 'ar', 'nl', 'pl', 'tr', 'sv', '']
 
   for (const lang of unsupported) {
     if (SUPPORTED_TARGET_LANGUAGES.has(lang)) {

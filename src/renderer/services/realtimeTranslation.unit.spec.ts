@@ -31,6 +31,7 @@ class FakeEventTarget {
 class FakeAudioTrack extends FakeEventTarget {
   enabled = true
   stopped = false
+  contentHint = ''
   readonly id: string
 
   constructor(id: string) {
@@ -70,10 +71,15 @@ class FakeDataChannel extends FakeEventTarget {
 }
 
 class FakeAudioContext {
+  readonly options: Record<string, unknown> | undefined
   sinkIds: string[] = []
   closed = false
   resumed = false
   lastGainNode: { gain: { value: number } } | undefined
+
+  constructor(options?: Record<string, unknown>) {
+    this.options = options
+  }
 
   async setSinkId(sinkId: string): Promise<void> {
     this.sinkIds.push(sinkId)
@@ -120,7 +126,6 @@ class FakePeerConnection extends FakeEventTarget {
   connectionState: RTCPeerConnectionState = 'new'
   closed = false
   dataChannel = new FakeDataChannel()
-  replacedTracks: FakeAudioTrack[] = []
   addedTracks: FakeAudioTrack[] = []
   private readonly postSdpState: RTCPeerConnectionState
 
@@ -135,11 +140,7 @@ class FakePeerConnection extends FakeEventTarget {
 
   addTrack(track: FakeAudioTrack) {
     this.addedTracks.push(track)
-    return {
-      replaceTrack: async (nextTrack: FakeAudioTrack) => {
-        this.replacedTracks.push(nextTrack)
-      },
-    }
+    return {}
   }
 
   async createOffer() {
@@ -169,19 +170,20 @@ type TestHarness = {
   peerConnections: FakePeerConnection[]
   audioContexts: FakeAudioContext[]
   capturedTracks: FakeAudioTrack[]
+  mediaConstraints: unknown[]
   restore: () => void
 }
 
 type HarnessOptions = {
   fastTimers?: boolean
   postSdpState?: (connectionIndex: number) => RTCPeerConnectionState
-  onGetUserMedia?: (callIndex: number, createDefault: () => FakeMediaStream) => Promise<FakeMediaStream>
 }
 
 function setupBrowserHarness(options?: HarnessOptions): TestHarness {
   const peerConnections: FakePeerConnection[] = []
   const audioContexts: FakeAudioContext[] = []
   const capturedTracks: FakeAudioTrack[] = []
+  const mediaConstraints: unknown[] = []
   let trackCounter = 0
   let pcCounter = 0
 
@@ -240,10 +242,8 @@ function setupBrowserHarness(options?: HarnessOptions): TestHarness {
 
   const fakeNavigator = {
     mediaDevices: {
-      getUserMedia: async () => {
-        if (options?.onGetUserMedia) {
-          return options.onGetUserMedia(trackCounter + 1, createDefaultStream)
-        }
+      getUserMedia: async (constraints?: unknown) => {
+        mediaConstraints.push(constraints)
         return createDefaultStream()
       },
     },
@@ -263,8 +263,8 @@ function setupBrowserHarness(options?: HarnessOptions): TestHarness {
       }
     },
     AudioContext: class extends FakeAudioContext {
-      constructor() {
-        super()
+      constructor(ctxOptions?: Record<string, unknown>) {
+        super(ctxOptions)
         audioContexts.push(this)
       }
     },
@@ -281,6 +281,7 @@ function setupBrowserHarness(options?: HarnessOptions): TestHarness {
     peerConnections,
     audioContexts,
     capturedTracks,
+    mediaConstraints,
     restore: () => {
       globalThis.fetch = originalFetch
       ;(globalThis as Record<string, unknown>).window = originalWindow
@@ -333,13 +334,29 @@ test('startTranslationSession connects, separates peer connection from playback 
   assert.strictEqual(statuses.at(-1), 'connected')
   assert.deepStrictEqual(playbackStates, [])
 
-  // Remote audio track arrives -> playback becomes ready.
+  // Remote audio track arrives -> playback becomes ready and jitterBufferTarget is minimized.
+  const receiver: { jitterBufferTarget: number | null } = { jitterBufferTarget: 50 }
   pc.emit('track', {
     track: new FakeAudioTrack('remote-1'),
     streams: [new FakeMediaStream([new FakeAudioTrack('remote-1')])],
-    receiver: {},
+    receiver,
   })
   await new Promise(resolve => setTimeout(resolve, 5))
+  assert.strictEqual(receiver.jitterBufferTarget, 0)
+  assert.strictEqual(activeHarness.capturedTracks[0]?.contentHint, 'speech')
+  assert.deepStrictEqual(activeHarness.mediaConstraints[0], {
+    audio: {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      channelCount: { ideal: 1 },
+      sampleRate: { ideal: 48_000 },
+      deviceId: { exact: 'mic-1' },
+    },
+    video: false,
+  })
+  assert.strictEqual(activeHarness.audioContexts[0]?.options?.latencyHint, 'interactive')
+  assert.strictEqual(activeHarness.audioContexts[0]?.options?.sampleRate, 48_000)
   assert.strictEqual(playbackStates.at(-1), true)
 
   session.stop()
@@ -351,19 +368,8 @@ test('startTranslationSession connects, separates peer connection from playback 
   assert.deepStrictEqual(statuses.slice(-2), ['stopping', 'idle'])
 })
 
-test('startTranslationSession preserves mute toggled while input device hot-swap is in flight', async () => {
-  let releaseSwapMedia: (() => void) | undefined
-
-  activeHarness = setupBrowserHarness({
-    onGetUserMedia: async (callIndex, createDefault) => {
-      if (callIndex === 2) {
-        await new Promise<void>(resolve => {
-          releaseSwapMedia = resolve
-        })
-      }
-      return createDefault()
-    },
-  })
+test('startTranslationSession updates mute and output volume live', async () => {
+  activeHarness = setupBrowserHarness()
 
   const session = await startTranslationSession({
     inputDeviceId: 'mic-1',
@@ -373,22 +379,24 @@ test('startTranslationSession preserves mute toggled while input device hot-swap
   })
 
   assert.strictEqual(activeHarness.capturedTracks[0]?.enabled, true)
+  assert.deepStrictEqual(activeHarness.audioContexts[0]?.sinkIds, ['out-1'])
 
-  // Start hot-swap, then toggle mute WHILE getUserMedia is still pending.
-  const swapPromise = session.setInputDevice('mic-2')
+  const pc = activeHarness.peerConnections[0]
+  assert.ok(pc)
+  pc.emit('track', {
+    track: new FakeAudioTrack('remote-1'),
+    streams: [new FakeMediaStream([new FakeAudioTrack('remote-1')])],
+    receiver: { jitterBufferTarget: 20 },
+  })
+
   session.setMuted(true)
   assert.strictEqual(activeHarness.capturedTracks[0]?.enabled, false)
 
-  releaseSwapMedia?.()
-  await swapPromise
+  session.setMuted(false)
+  assert.strictEqual(activeHarness.capturedTracks[0]?.enabled, true)
 
-  assert.strictEqual(activeHarness.capturedTracks.length, 2)
-  assert.strictEqual(activeHarness.capturedTracks[0]?.stopped, true)
-  assert.strictEqual(activeHarness.capturedTracks[1]?.enabled, false)
-  assert.strictEqual(activeHarness.peerConnections[0]?.replacedTracks.length, 1)
-
-  await session.setOutputDevice('out-2')
-  assert.deepStrictEqual(activeHarness.audioContexts[0]?.sinkIds, ['out-1', 'out-2'])
+  session.setOutputVolume(1.25)
+  assert.strictEqual(activeHarness.audioContexts[0]?.lastGainNode?.gain.value, 1.25)
 
   session.stop()
 })

@@ -38,8 +38,6 @@ export type StartTranslationSessionOptions = {
 
 export type ActiveTranslationSession = {
   stop: () => void
-  setInputDevice: (deviceId: string) => Promise<void>
-  setOutputDevice: (deviceId: string) => Promise<void>
   setMuted: (muted: boolean) => void
   setOutputVolume: (volume: number) => void
 }
@@ -47,10 +45,6 @@ export type ActiveTranslationSession = {
 type RealtimeServerEvent = {
   type?: unknown
   error?: unknown
-}
-
-type AudioContextOptionsWithSinkId = AudioContextOptions & {
-  sinkId?: string
 }
 
 type AudioContextWithSinkId = AudioContext & {
@@ -61,6 +55,14 @@ type SinkSelectableAudioElement = HTMLAudioElement & {
   setSinkId?: (sinkId: string) => Promise<void>
 }
 
+type RTCRtpReceiverWithJitterBufferTarget = RTCRtpReceiver & {
+  jitterBufferTarget?: number | null
+}
+
+type SpeechHintAudioTrack = MediaStreamTrack & {
+  contentHint?: string
+}
+
 type LatencyLogger = {
   mark: (label: string) => void
   markOnce: (label: string) => void
@@ -68,8 +70,6 @@ type LatencyLogger = {
 
 type ManagedConnection = {
   getConnectionState: () => RTCPeerConnectionState | 'closed'
-  replaceInput: (deviceId: string) => Promise<void>
-  replaceOutput: (deviceId: string) => Promise<void>
   applyMute: (muted: boolean) => void
   applyVolume: (volume: number) => void
   readLevels: () => AudioLevels
@@ -81,13 +81,12 @@ const STATS_POLL_INTERVAL_MS = 2000
 const LEVELS_POLL_INTERVAL_MS = 80
 const ANALYSER_FFT_SIZE = 256
 const MAX_OUTPUT_VOLUME = 1.5
+const AUDIO_SAMPLE_RATE = 48_000
 
 const latencyDebugEnabled = import.meta.env?.VITE_LATENCY_DEBUG === 'true'
 
 const NOOP_SESSION: ActiveTranslationSession = {
   stop: () => undefined,
-  setInputDevice: async () => undefined,
-  setOutputDevice: async () => undefined,
   setMuted: () => undefined,
   setOutputVolume: () => undefined,
 }
@@ -130,7 +129,16 @@ function buildAudioConstraints(deviceId: string, disableAudioDSP?: boolean): Med
     echoCancellation: !disableAudioDSP,
     noiseSuppression: !disableAudioDSP,
     autoGainControl: !disableAudioDSP,
+    channelCount: { ideal: 1 },
+    sampleRate: { ideal: AUDIO_SAMPLE_RATE },
     ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+  }
+}
+
+function applySpeechContentHint(track: MediaStreamTrack): void {
+  const hintTrack = track as SpeechHintAudioTrack
+  if ('contentHint' in hintTrack) {
+    hintTrack.contentHint = 'speech'
   }
 }
 
@@ -209,16 +217,10 @@ function applyStreamMute(stream: MediaStream | undefined, muted: boolean): void 
 }
 
 async function createOutputAudioContext(outputDeviceId: string): Promise<AudioContextWithSinkId | undefined> {
-  let ctx: AudioContextWithSinkId
-
-  try {
-    ctx = new AudioContext({
-      latencyHint: 'interactive',
-      sinkId: outputDeviceId,
-    } as AudioContextOptionsWithSinkId) as AudioContextWithSinkId
-  } catch {
-    ctx = new AudioContext({ latencyHint: 'interactive' }) as AudioContextWithSinkId
-  }
+  const ctx = new AudioContext({
+    latencyHint: 'interactive',
+    sampleRate: AUDIO_SAMPLE_RATE,
+  }) as AudioContextWithSinkId
 
   if (!ctx.setSinkId) {
     void ctx.close().catch(() => undefined)
@@ -272,7 +274,6 @@ async function openConnection({
 
   let inputStream: MediaStream | undefined
   let peerConnection: RTCPeerConnection | undefined
-  let audioSender: RTCRtpSender | undefined
   let dataChannel: RTCDataChannel | undefined
   let audioContext: AudioContextWithSinkId | undefined
   let monitorContext: AudioContext | undefined
@@ -312,7 +313,10 @@ async function openConnection({
     inputAnalyserSource?.disconnect()
     inputAnalyserSource = undefined
 
-    const meterCtx = audioContext ?? monitorContext ?? (monitorContext = new AudioContext())
+    const meterCtx =
+      audioContext ??
+      monitorContext ??
+      (monitorContext = new AudioContext({ latencyHint: 'interactive', sampleRate: AUDIO_SAMPLE_RATE }))
     if (!inputAnalyser) {
       inputAnalyser = meterCtx.createAnalyser()
       inputAnalyser.fftSize = ANALYSER_FFT_SIZE
@@ -476,12 +480,22 @@ async function openConnection({
     }
 
     applyStreamMute(capturedInputStream, getMuted())
+    applySpeechContentHint(inputTrack)
     attachInputMeter(capturedInputStream)
-    audioSender = peerConnection.addTrack(inputTrack, capturedInputStream)
+    peerConnection.addTrack(inputTrack, capturedInputStream)
 
     peerConnection.addEventListener('track', event => {
       if (isClosed || audioElement.srcObject) {
         return
+      }
+
+      const receiver = event.receiver as RTCRtpReceiverWithJitterBufferTarget | undefined
+      if (receiver && 'jitterBufferTarget' in receiver) {
+        try {
+          receiver.jitterBufferTarget = 0
+        } catch {
+          // Ignore runtimes with read-only or unsupported jitterBufferTarget.
+        }
       }
 
       const remoteStream = event.streams[0] ?? new MediaStream([event.track])
@@ -500,14 +514,12 @@ async function openConnection({
         outputGainNode = audioContext.createGain()
         outputGainNode.gain.value = volume
         remoteAudioSource.connect(outputGainNode)
+        outputGainNode.connect(audioContext.destination)
 
         if (enableLevels) {
           outputAnalyser = audioContext.createAnalyser()
           outputAnalyser.fftSize = ANALYSER_FFT_SIZE
           outputGainNode.connect(outputAnalyser)
-          outputAnalyser.connect(audioContext.destination)
-        } else {
-          outputGainNode.connect(audioContext.destination)
         }
 
         void audioContext
@@ -575,69 +587,6 @@ async function openConnection({
 
     return {
       getConnectionState: () => (isClosed ? 'closed' : (peerConnection?.connectionState ?? 'closed')),
-      replaceInput: async (nextDeviceId: string) => {
-        if (isClosed || !audioSender) {
-          return
-        }
-
-        const nextStream = await navigator.mediaDevices.getUserMedia({
-          audio: buildAudioConstraints(nextDeviceId, disableAudioDSP),
-          video: false,
-        })
-
-        if (isClosed) {
-          stopStream(nextStream)
-          return
-        }
-
-        applyStreamMute(nextStream, getMuted())
-        const [nextTrack] = nextStream.getAudioTracks()
-
-        if (!nextTrack) {
-          stopStream(nextStream)
-          throw new Error('No microphone audio track was captured.')
-        }
-
-        try {
-          await audioSender.replaceTrack(nextTrack)
-        } catch (error) {
-          stopStream(nextStream)
-          throw error
-        }
-
-        if (isClosed) {
-          stopStream(nextStream)
-          return
-        }
-
-        // Re-apply latest mute state in case it toggled while getUserMedia/replaceTrack was pending.
-        applyStreamMute(nextStream, getMuted())
-        attachInputMeter(nextStream)
-        const previousStream = inputStream
-        inputStream = nextStream
-        if (previousStream) {
-          stopStream(previousStream)
-        }
-      },
-      replaceOutput: async (nextDeviceId: string) => {
-        if (isClosed) {
-          return
-        }
-
-        if (audioContext?.setSinkId) {
-          await audioContext.setSinkId(nextDeviceId)
-          applyVolume(getOutputVolume())
-          return
-        }
-
-        if (audioElement.setSinkId) {
-          await audioElement.setSinkId(nextDeviceId)
-          applyVolume(getOutputVolume())
-          return
-        }
-
-        throw new Error('This runtime does not support selecting an audio output device.')
-      },
       applyMute: (nextMuted: boolean) => {
         applyStreamMute(inputStream, nextMuted)
       },
@@ -693,8 +642,6 @@ export async function startTranslationSession({
     throw new Error('Electron bridge is not available.')
   }
 
-  let currentInputDeviceId = inputDeviceId
-  let currentOutputDeviceId = outputDeviceId
   let currentMuted = initialMuted
   let currentOutputVolume = clampVolume(initialOutputVolume)
   let activeConnection: ManagedConnection | undefined
@@ -805,8 +752,8 @@ export async function startTranslationSession({
 
   const establishConnection = async (notifyConnectingOnCapture: boolean): Promise<ManagedConnection> => {
     const conn = await openConnection({
-      inputDeviceId: currentInputDeviceId,
-      outputDeviceId: currentOutputDeviceId,
+      inputDeviceId,
+      outputDeviceId,
       targetLanguage,
       noiseReduction,
       disableAudioDSP,
@@ -933,18 +880,6 @@ export async function startTranslationSession({
         callbacks.onStatusChange('stopping')
         stopSession()
         callbacks.onStatusChange('idle')
-      },
-      setInputDevice: async (nextDeviceId: string) => {
-        if (activeConnection) {
-          await activeConnection.replaceInput(nextDeviceId)
-        }
-        currentInputDeviceId = nextDeviceId
-      },
-      setOutputDevice: async (nextDeviceId: string) => {
-        if (activeConnection) {
-          await activeConnection.replaceOutput(nextDeviceId)
-        }
-        currentOutputDeviceId = nextDeviceId
       },
       setMuted: (muted: boolean) => {
         currentMuted = muted

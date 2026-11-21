@@ -80,6 +80,8 @@ test('validateCreateClientSecretParams accepts valid payloads and rejects invali
   assert.throws(() => validateCreateClientSecretParams(null), /object/i)
   assert.throws(() => validateCreateClientSecretParams([]), /object/i)
   assert.throws(() => validateCreateClientSecretParams({ targetLanguage: 'ar' }), /targetLanguage/i)
+  assert.throws(() => validateCreateClientSecretParams({ targetLanguage: 'es' }), /targetLanguage/i)
+  assert.throws(() => validateCreateClientSecretParams({ targetLanguage: 'pt-PT' }), /targetLanguage/i)
   assert.throws(
     () => validateCreateClientSecretParams({ targetLanguage: 'en', noiseReduction: 'ultra' }),
     /noiseReduction/i,
